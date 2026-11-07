@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# OS
+.DS_Store
+
+# ---- DATA: never commit (download/regenerate locally) ----
+# ITU IFIC databases and extracts
+*.mdb
+*.db
+*.zip
+# source datasets / API pulls
+*.xlsx
+*.json
