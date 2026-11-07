@@ -380,6 +380,28 @@ def database_view(ific, dark):
     df = tables[name]
     st.caption(f"{len(df):,} rows")
 
+    if name.startswith("Shortlist"):
+        # inline relabel: edit the `label` cell of ANY row (persisted)
+        st.caption("✏️ Edit the **label** column on any row to relabel "
+                   "(reviewer override — persisted).")
+        cols = ["sat_ntc_id", "sat_name", "adm", "is_gso", "review_status",
+                "label", "worst_margin_db", "alert_stations", "n_bands"]
+        edited = st.data_editor(
+            sl[cols], hide_index=True, width='stretch', height=480,
+            key=f"relabel_{ific}", disabled=[c for c in cols if c != "label"],
+            column_config={"label": st.column_config.SelectboxColumn(
+                "label", options=OVERRIDE_LABELS, required=True)})
+        changed = False
+        for r in edited.itertuples():
+            orig = sl.loc[sl.sat_ntc_id == r.sat_ntc_id, "label"].iloc[0]
+            if r.label != orig:
+                auto = sl.loc[sl.sat_ntc_id == r.sat_ntc_id, "review_status"].iloc[0]
+                set_override(ific, r.sat_ntc_id, None if r.label == auto else r.label)
+                changed = True
+        if changed:
+            st.rerun()
+        return
+
     def hl_margin(v):
         try:
             return "background-color: rgba(229,62,62,0.28)" if float(v) > 0 else ""
@@ -392,24 +414,9 @@ def database_view(ific, dark):
     sty = df.style
     if "margin" in df.columns:
         sty = sty.map(hl_margin, subset=["margin"])
-    if "label" in df.columns:
-        sty = sty.map(hl_label, subset=["label"])
     if "worst_margin_db" in df.columns:
         sty = sty.map(hl_margin, subset=["worst_margin_db"])
     st.dataframe(sty, width='stretch', height=480)
-
-    if name.startswith("Shortlist"):
-        st.markdown("**Relabel a satellite** (reviewer override — persisted)")
-        c1, c2, c3 = st.columns([2, 2, 1])
-        rn = c1.selectbox("satellite", sl.sat_ntc_id,
-                          format_func=lambda n: f"{sl.loc[sl.sat_ntc_id==n,'sat_name'].iloc[0]} ({n})")
-        cur = sl.loc[sl.sat_ntc_id == rn, "label"].iloc[0]
-        new = c2.selectbox("new label", OVERRIDE_LABELS,
-                           index=OVERRIDE_LABELS.index(cur) if cur in OVERRIDE_LABELS else 0)
-        if c3.button("Apply", width='stretch'):
-            set_override(ific, rn, new); st.success(f"{rn} → {new}"); st.rerun()
-        if c3.button("Reset", width='stretch'):
-            set_override(ific, rn, None); st.success(f"{rn} reset to auto"); st.rerun()
 
 
 def main():
