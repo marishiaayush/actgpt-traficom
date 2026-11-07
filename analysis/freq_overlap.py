@@ -88,27 +88,41 @@ def compute_overlap(p, s):
       interf_freq_mhz : frequency where interference lands (used downstream for
                    the Article-21 limit / PFD). Co = overlap midpoint;
                    adjacent = the victim's frequency (where OOBE spills in).
+
+    SCALABILITY: we do NOT compare every satellite band against every station
+    (that is O(bands x stations) -- fine for the 874-row dummy but ~10^10 on the
+    real tens-of-millions-of-rows table). Instead we index stations by frequency
+    (sorted) and, for each band, binary-search only the stations whose channel
+    could be within [band +- guard]. Cost ~ O(bands * (log N + matches)), so it
+    scales with the number of *matches*, not the full cross product.
     """
-    rows = []
+    # extract numpy arrays once (pandas .iloc per row is far too slow at scale)
     lo = p["lo"].to_numpy(); hi = p["hi"].to_numpy()
+    vf = p["victim_freq_mhz"].to_numpy()
+    stn = p["station_no"].to_numpy(); lic = p["licence_class"].to_numpy()
+    role = p["station_role"].to_numpy(); band = p["band"].to_numpy()
+    order = np.argsort(vf)
+    vf_sorted = vf[order]
+    half_max = float(((hi - lo) / 2.0).max()) if len(p) else 0.0
+
+    rows = []
     for b in s.itertuples():
         bw = max(b.hi - b.lo, 0.0)
         guard = adjacent.guard_mhz(bw)
-        co = (b.lo <= hi) & (lo <= b.hi)
-        near = (b.lo - guard <= hi) & (lo <= b.hi + guard) & ~co
-        for i in np.where(co)[0]:
-            st = p.iloc[i]
-            mid = (max(b.lo, st.lo) + min(b.hi, st.hi)) / 2.0
-            rows.append((b.ntc_id, b.adm, b.lo, b.hi, st.station_no,
-                         st.licence_class, st.station_role, st.victim_freq_mhz,
-                         "co", 0.0, float(mid), st.band))
-        for i in np.where(near)[0]:
-            st = p.iloc[i]
-            gap = max(b.lo - st.hi, st.lo - b.hi, 0.0)  # positive separation
-            rows.append((b.ntc_id, b.adm, b.lo, b.hi, st.station_no,
-                         st.licence_class, st.station_role, st.victim_freq_mhz,
-                         "adjacent", float(gap), float(st.victim_freq_mhz),
-                         st.band))
+        # candidate stations: victim freq within the band +- (guard + widest half-channel)
+        i0 = np.searchsorted(vf_sorted, b.lo - guard - half_max, "left")
+        i1 = np.searchsorted(vf_sorted, b.hi + guard + half_max, "right")
+        for idx in order[i0:i1]:
+            if b.lo <= hi[idx] and lo[idx] <= b.hi:                 # co-channel
+                mid = (max(b.lo, lo[idx]) + min(b.hi, hi[idx])) / 2.0
+                rows.append((b.ntc_id, b.adm, b.lo, b.hi, stn[idx], lic[idx],
+                             role[idx], vf[idx], "co", 0.0, float(mid), band[idx]))
+            else:                                                  # maybe adjacent
+                gap = max(b.lo - hi[idx], lo[idx] - b.hi, 0.0)
+                if gap <= guard:
+                    rows.append((b.ntc_id, b.adm, b.lo, b.hi, stn[idx], lic[idx],
+                                 role[idx], vf[idx], "adjacent", float(gap),
+                                 float(vf[idx]), band[idx]))
     cols = ["sat_ntc_id", "adm", "sat_lo_mhz", "sat_hi_mhz", "station_no",
             "licence_class", "station_role", "victim_freq_mhz", "proximity",
             "offset_mhz", "interf_freq_mhz", "band"]

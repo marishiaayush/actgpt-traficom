@@ -315,6 +315,18 @@ a concrete set of screening alerts that the worst-case screen deliberately
 over-includes, pending off-axis / epfd refinement and the expert validation in
 [`QUESTIONS.md`](QUESTIONS.md).
 
+### Scalability (the synthetic table is 874 rows; the real one is ~10^7)
+- **Physics is per-notice, not per-pair.** Geometry (SGP4) and PFD power are
+  computed once per satellite notice and reused -> they scale with ~hundreds of
+  notices, not with stations.
+- **Stage 1 is frequency-indexed, not brute-force.** Stations are sorted by
+  frequency; each satellite band binary-searches only the stations near its
+  frequency (`searchsorted`) instead of comparing all bands x all stations
+  (O(10^10) on the real table). Verified identical output.
+- **The irreducible cost is the number of matched pairs** (data-driven). Next
+  steps for true scale: vectorized/bulk pair emission (not a Python append loop)
+  and aggregating co-located, co-frequency stations into one PFD case.
+
 ### Known limitations / next refinements
 - Table 21-4 values are the long-standing ones; verify vs current RR, finer band
   edges. Bands outside the table (e.g. <1525 MHz, 12.75-17.7 GHz) are unscored.

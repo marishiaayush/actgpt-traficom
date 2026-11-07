@@ -69,6 +69,7 @@ uv run python analysis/pfd_explainer.py   # interactive PFD vs elevation
 | `pfd_score.py` | steps 2–3 — geometry + PFD margin, ranked triage |
 | `score_breakdown.py` | audit trace: every number behind a flagged score, verified |
 | `orbit_paths.py` | simulated SGP4 ground tracks of the flagged satellites |
+| `custom_receiver.py` | score interference for any new receiver — fixed, offshore/maritime, or moving (ship) along a track |
 | `adjacent.py` | adjacent-band guard + frequency-dependent rejection (FDR) |
 | `pfd_explainer.py`, `map_interactive.py` | interactive explainer figures |
 | `footprint_3d.py` | 3D visibility-cone footprints of flagged satellites over Finland |
