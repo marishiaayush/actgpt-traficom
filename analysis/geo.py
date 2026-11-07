@@ -19,6 +19,10 @@ from shapely import contains_xy
 from shapely.geometry import shape
 from shapely.ops import unary_union
 
+from pfd import (slant_range_km, elevation_from_central_angle,
+                 central_angle_deg, GSO_ALT_KM)
+import article21
+
 DATA = Path(__file__).resolve().parent / "data"
 R_E, GSO_ALT = 6371.0, 35786.0
 FIN_LON, FIN_LAT = 25.0, 64.0            # representative overpass centre (non-GSO)
@@ -95,6 +99,46 @@ def affected_region(is_gso, slot_lon=None, alt_km=None):
         includes_maritime=aff_sea > 0,
         pct_maritime=round(100.0 * aff_sea / sea_tot, 1) if sea_tot else 0.0,
         n_cells=int(vis.sum()))
+
+
+def over_limit_region(is_gso, eirp_eff, freq_mhz, slot_lon=None,
+                      alt_km=None, incl=None):
+    """Grid cells where the satellite's PFD would EXCEED the Article-21 limit
+    (per-cell geometry), i.e. *which part of Finland is actually over the
+    limit*. Varies across Finland (unlike all-or-nothing horizon visibility)."""
+    _, ref_bw = article21.limit(freq_mhz, 10.0)
+    if ref_bw is None:                       # no Art-21 band -> fall back
+        return affected_region(is_gso, slot_lon, alt_km)
+    glon, glat, zone = _grid()
+    aff = np.zeros(len(glon), bool)
+    mtl = None if incl is None else (incl if incl <= 90 else 180 - incl)
+    for i in range(len(glon)):
+        if is_gso:
+            elev = elevation_from_central_angle(
+                central_angle_deg(glat[i], glon[i], 0.0, slot_lon), GSO_ALT_KM)
+            if elev <= 0:
+                continue
+            d = slant_range_km(elev, GSO_ALT_KM)
+        else:
+            if mtl is None or abs(glat[i]) <= mtl:
+                elev = 85.0
+            else:
+                elev = elevation_from_central_angle(abs(glat[i]) - mtl, alt_km)
+                if elev <= 0:
+                    continue
+            d = slant_range_km(elev, alt_km)
+        pfd = eirp_eff - 20.0 * math.log10(d * 1000.0) - 10.0 * math.log10(4 * math.pi)
+        lim, _ = article21.limit(freq_mhz, elev)
+        if pfd - lim > 0:
+            aff[i] = True
+    tot = len(glon)
+    sea_tot = int((zone == "maritime").sum())
+    aff_sea = int((aff & (zone == "maritime")).sum())
+    return dict(lon=glon[aff], lat=glat[aff], zone=zone[aff],
+                pct_territory=round(100.0 * aff.sum() / tot, 1) if tot else 0.0,
+                includes_maritime=aff_sea > 0,
+                pct_maritime=round(100.0 * aff_sea / sea_tot, 1) if sea_tot else 0.0,
+                n_cells=int(aff.sum()))
 
 
 if __name__ == "__main__":

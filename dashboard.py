@@ -8,6 +8,7 @@ Two-panel Streamlit app reading the consolidated app.db:
 Run:  uv run streamlit run dashboard.py
 """
 
+import math
 import sqlite3
 import sys
 from pathlib import Path
@@ -78,19 +79,30 @@ def worst_pair(ific, ntc):
 
 @st.cache_data(show_spinner=False)
 def affected_area(ific, ntc, is_gso):
-    """Which part of Finland (land + maritime/EEZ) the satellite can illuminate,
-    plus the affected stations tagged land/maritime."""
+    """Which part of Finland (land + maritime/EEZ) is OVER the Article-21 limit
+    (per-cell PFD margin), plus the affected stations tagged land/maritime."""
     import geo
-    if is_gso:
-        con = sqlite3.connect(ROOT / "analysis" / f"srs{ific}.db")
-        slot = pd.read_sql("SELECT MIN(long_nom) lon FROM geo WHERE ntc_id=?",
-                           con, params=(ntc,)).lon.iloc[0]
-        con.close()
-        reg = geo.affected_region(True, slot_lon=slot)
-    else:
-        alt = q("SELECT alt_km FROM fin_geom_sgp4 WHERE ific_no=? AND sat_ntc_id=?",
-                (ific, ntc))
-        reg = geo.affected_region(False, alt_km=(float(alt.alt_km.iloc[0]) if len(alt) else 600))
+    reg = dict(lon=[], lat=[], pct_territory=0.0, includes_maritime=False,
+               pct_maritime=0.0, n_cells=0)
+    wp = worst_pair(ific, ntc)
+    if wp is not None and wp.status == "scored":
+        d_m = wp.slant_km * 1000.0
+        eirp_eff = (wp.pfd + 20 * math.log10(d_m) + 10 * math.log10(4 * math.pi)
+                    + (wp.fdr_db or 0))
+        freq = wp.overlap_freq_mhz
+        if is_gso:
+            con = sqlite3.connect(ROOT / "analysis" / f"srs{ific}.db")
+            slot = pd.read_sql("SELECT MIN(long_nom) lon FROM geo WHERE ntc_id=?",
+                               con, params=(ntc,)).lon.iloc[0]
+            con.close()
+            reg = geo.over_limit_region(True, eirp_eff, freq, slot_lon=slot)
+        else:
+            gi = q("SELECT alt_km, incl FROM fin_geom_sgp4 WHERE ific_no=? AND sat_ntc_id=?",
+                   (ific, ntc))
+            reg = geo.over_limit_region(
+                False, eirp_eff, freq,
+                alt_km=float(gi.alt_km.iloc[0]) if len(gi) else 600.0,
+                incl=float(gi.incl.iloc[0]) if len(gi) else 90.0)
     aff = affected_stations(ific, ntc)
     aff = aff.copy()
     aff["zone"] = [geo.classify_point(la, lo) for la, lo in zip(aff.lat, aff.lon)]
@@ -135,31 +147,34 @@ def map_panel(ific, ntc, is_gso, dark):
     """Zoomable mapbox view: protected stations, maritime (EEZ) border, the
     illuminated part of Finland, affected stations (land/maritime), orbit track."""
     style = "carto-darkmatter" if dark else "carto-positron"
-    allst = q("SELECT lat, lon FROM protected_stations WHERE lat IS NOT NULL")
+    allst = q("SELECT station_no, lat, lon, licence_class FROM protected_stations "
+              "WHERE lat IS NOT NULL")
     reg, aff = affected_area(ific, ntc, is_gso) if ntc else (None, pd.DataFrame())
     fig = go.Figure()
 
-    # illuminated part of Finland (footprint ∩ territory)
+    # illuminated part of Finland (margin>0 cells)
     if reg is not None and reg["n_cells"]:
         fig.add_trace(go.Scattermap(lon=list(reg["lon"]), lat=list(reg["lat"]),
-            mode="markers", marker=dict(size=5, color="rgba(49,130,206,0.20)"),
-            name="illuminated area", hoverinfo="skip"))
+            mode="markers", marker=dict(size=5, color="rgba(229,62,62,0.16)"),
+            name="over-limit area", hoverinfo="skip"))
     # maritime (EEZ) border
     mlon, mlat = maritime_outline()
     fig.add_trace(go.Scattermap(lon=mlon, lat=mlat, mode="lines",
         line=dict(width=1, color="#3182ce"), name="maritime (EEZ) border",
         hoverinfo="skip"))
-    # all protected stations
+    # all protected stations (hover shows id + class)
     fig.add_trace(go.Scattermap(lon=allst.lon, lat=allst.lat, mode="markers",
         marker=dict(size=4, color="#9aa5b1"), name="protected stations",
-        hoverinfo="skip"))
-    # affected stations, split land vs maritime
+        text=[f"stn {int(n)} · {c or '?'}" for n, c in zip(allst.station_no, allst.licence_class)],
+        hoverinfo="text"))
+    # affected stations, split land vs maritime (rich hover)
     for z, col in [("land", "#e53e3e"), ("maritime", "#dd6b20")]:
         s = aff[aff.zone == z] if len(aff) else aff
         if len(s):
             fig.add_trace(go.Scattermap(lon=s.lon, lat=s.lat, mode="markers",
-                marker=dict(size=11, color=col), name=f"affected · {z} ({len(s)})",
-                text=[f"stn {int(n)}  {m:+.1f} dB" for n, m in zip(s.station_no, s.margin)],
+                marker=dict(size=12, color=col), name=f"affected · {z} ({len(s)})",
+                text=[f"stn {int(r.station_no)} · {z}<br>{r.overlap_freq_mhz:.1f} MHz · "
+                      f"margin {r.margin:+.1f} dB<br>class {r.role}" for r in s.itertuples()],
                 hoverinfo="text"))
     # orbit ground track (non-GSO)
     if ntc:
@@ -169,13 +184,48 @@ def map_panel(ific, ntc, is_gso, dark):
                 mode="lines", line=dict(width=1.5, color="#805ad5"),
                 name="orbit ground track", hoverinfo="skip"))
 
+    lab = "#e2e8f0" if dark else "#1a202c"
     fig.update_layout(
         map=dict(style=style, center=dict(lat=64.5, lon=26.0), zoom=3.4),
         height=600, margin=dict(l=0, r=0, t=0, b=0),
-        legend=dict(orientation="h", y=-0.02, font=dict(size=10)),
-        paper_bgcolor="rgba(0,0,0,0)",
-        font_color="#e2e8f0" if dark else "#1a202c")
+        legend=dict(orientation="h", y=-0.03, font=dict(size=13, color=lab),
+                    bgcolor="rgba(0,0,0,0)"),
+        paper_bgcolor="rgba(0,0,0,0)", font=dict(color=lab, size=13))
     st.plotly_chart(fig, width='stretch', config={"scrollZoom": True})
+
+
+def spectrum_panel(ific, ntc, dark):
+    """Frequency view under the map: the satellite's emission band(s) vs the
+    Finnish RX channel(s) it overlaps -- shows the bandwidth it interferes with."""
+    d = q("""SELECT DISTINCT o.sat_lo_mhz, o.sat_hi_mhz, o.victim_freq_mhz,
+                    o.proximity, s.channel_bw_mhz bw
+             FROM fin_freq_overlap o JOIN protected_stations s
+               ON s.station_no=o.station_no
+             WHERE o.ific_no=? AND o.sat_ntc_id=? ORDER BY o.victim_freq_mhz LIMIT 80""",
+          (ific, ntc))
+    if d.empty:
+        return
+    lab = "#e2e8f0" if dark else "#1a202c"
+    fig = go.Figure()
+    sx = []
+    for b in d[["sat_lo_mhz", "sat_hi_mhz"]].drop_duplicates().itertuples():
+        sx += [b.sat_lo_mhz, b.sat_hi_mhz, None]
+    fig.add_trace(go.Scatter(x=sx, y=[1] * len(sx), mode="lines",
+        line=dict(width=12, color="#2b6cb0"), name="satellite emission"))
+    vx = []
+    for r in d.itertuples():
+        hw = (r.bw or 0.05) / 2.0
+        vx += [r.victim_freq_mhz - hw, r.victim_freq_mhz + hw, None]
+    fig.add_trace(go.Scatter(x=vx, y=[0] * len(vx), mode="lines",
+        line=dict(width=12, color="#2f855a"), name="Finnish RX channel"))
+    fig.update_layout(height=170, margin=dict(l=0, r=0, t=4, b=0),
+        template="plotly_dark" if dark else "plotly_white",
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        yaxis=dict(tickvals=[0, 1], ticktext=["FIN RX", "sat TX"], range=[-0.6, 1.6],
+                   tickfont=dict(color=lab, size=12)),
+        xaxis=dict(title="frequency (MHz)", color=lab),
+        legend=dict(orientation="h", y=1.3, font=dict(color=lab, size=12)))
+    st.plotly_chart(fig, width='stretch')
 
 
 # --------------------------------------------------------------------------
@@ -195,14 +245,29 @@ DARK_CSS = """<style>
 [data-testid="stSidebar"] * , .stApp p, .stApp label, .stApp span,
 .stMarkdown, h1,h2,h3,h4 { color: #e2e8f0 !important; }
 [data-testid="stMetricValue"], [data-testid="stMetricLabel"] { color: #e2e8f0 !important; }
-/* buttons: dark bg + light text (fixes the "white text on light button" bug) */
+/* buttons */
 .stButton > button, [data-testid="stBaseButton-secondary"],
 [data-testid="stLinkButton"] > a, [data-testid="stLinkButton"] a {
     background-color: #1f2937 !important; color: #e2e8f0 !important;
     border: 1px solid #374151 !important; }
-/* inputs */
-[data-baseweb="select"] > div, .stNumberInput input, .stTextInput input,
-[data-baseweb="input"] { background-color: #1f2937 !important; color: #e2e8f0 !important; }
+/* selectbox + number input: target the stable Streamlit WRAPPER classes and
+   every descendant (robust to baseweb's internal structure) */
+.stSelectbox div, .stSelectbox span, .stSelectbox input, .stSelectbox svg,
+.stNumberInput div, .stNumberInput span, .stNumberInput input,
+.stTextInput div, .stTextInput input {
+    background-color: #1f2937 !important; color: #e2e8f0 !important;
+    fill: #e2e8f0 !important; border-color: #374151 !important; }
+/* dropdown menu (rendered in a body-root portal) */
+ul[role="listbox"], li[role="option"], div[data-baseweb="popover"] div,
+div[data-baseweb="menu"] * {
+    background-color: #1f2937 !important; color: #e2e8f0 !important; }
+li[role="option"]:hover { background-color: #2d3748 !important; }
+/* alerts: info / success / warning / error -- wrapper + all descendants */
+.stAlert, .stAlert div, .stAlert p, .stAlert span,
+[data-testid="stAlert"], [data-testid="stAlert"] *,
+[data-testid="stAlertContainer"], [data-testid="stAlertContainer"] * {
+    background-color: #1a2435 !important; color: #e2e8f0 !important;
+    border-color: #2d3748 !important; }
 /* HTML tables -> dark */
 .actgpt-tbl th, .actgpt-tbl td { border-color: #2d3748 !important; color: #e2e8f0 !important; }
 .actgpt-tbl th { background: #1f2937 !important; }
@@ -228,6 +293,7 @@ def main():
         if pubs.empty:
             st.warning("No processed publications. Run the pipeline first.")
             st.stop()
+        import poller
         ific = st.selectbox("Publication (IFIC)", pubs.ific_no,
                             format_func=lambda x: f"IFIC {x} (space)")
         row = pubs[pubs.ific_no == ific].iloc[0]
@@ -235,28 +301,84 @@ def main():
         st.metric("Shortlisted", int(row.n_shortlist))
         st.metric("ALERTs", int(row.n_alerts))
         st.caption(f"last processed: {row.processed_at}")
-        st.link_button("📄 Fetch ITU report", row.pdf_url or "https://www.itu.int")
+        st.link_button("📄 Fetch ITU report (.zip)", poller.report_url(ific))
         st.divider()
-        with st.expander("Process another IFIC"):
-            new = st.number_input("IFIC number", value=int(ific), step=1)
-            if st.button("Run pipeline", width='stretch'):
-                with st.spinner(f"Processing IFIC {new} ..."):
-                    from pipeline import run_ific
-                    try:
-                        run_ific(int(new)); q.clear()
-                        st.success("Done — reselect it above."); st.rerun()
-                    except SystemExit as e:
-                        st.error(str(e))
+
+        # --- Phase 3: watch ITU for new publications ---
+        st.markdown("**ITU watch**")
+        lc = poller.last_checked()
+        st.caption(f"last checked: {lc}" if lc else "not checked yet")
+        if st.button("🔄 Check ITU for new IFIC", width='stretch'):
+            with st.spinner("Checking ITU demowic ..."):
+                st.session_state["chk"] = poller.check_itu()
+            st.rerun()
+        chk = st.session_state.get("chk")
+        if chk:
+            if not chk["ok"]:
+                st.warning("Could not reach ITU (offline?).")
+            elif chk["new"]:
+                st.info(f"{len(chk['new'])} unprocessed IFIC(s) available. "
+                        f"Latest: {max(chk['available'])}")
+                pick_new = st.selectbox("process a new IFIC", chk["new"][::-1])
+                if st.button(f"⬇️ Download & process IFIC {pick_new}", width='stretch'):
+                    with st.spinner(f"Downloading + processing IFIC {pick_new} "
+                                    "(large; may take minutes) ..."):
+                        from pipeline import run_ific
+                        try:
+                            poller.download_mdb(int(pick_new))
+                            run_ific(int(pick_new))
+                            q.clear(); st.session_state.pop("chk", None)
+                            st.success(f"IFIC {pick_new} processed — select it above.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed: {e}")
+            else:
+                st.success("Up to date — no new IFIC.")
 
     sl = shortlist(ific).sort_values(
         ["review_status", "worst_margin_db"], ascending=[True, False])
     st.subheader(f"IFIC {ific} — {int(row.n_alerts)} satellites flagged for review")
 
+    # --- Phase 4: bring your own receiver(s) ---
+    with st.expander("🧭 Check your own receiver(s) — land or maritime"):
+        st.caption("Enter coordinates + RX frequency/bandwidth. Add rows for multiple receivers.")
+        ed = st.data_editor(
+            pd.DataFrame([{"lat": 61.5, "lon": 20.5, "freq_MHz": 2200.0, "bw_MHz": 2.0}]),
+            num_rows="dynamic", width='stretch', key="rx_ed")
+        if st.button("Check interference", key="rx_go"):
+            import receiver
+            import geo as _geo
+            summary = []
+            details = []
+            for _, r in ed.dropna().iterrows():
+                try:
+                    res = receiver.score_receiver(ific, float(r.lat), float(r.lon),
+                                                  float(r.freq_MHz), float(r.bw_MHz))
+                except Exception as e:
+                    st.error(f"receiver {r.lat},{r.lon} failed: {e}"); continue
+                zone = _geo.classify_point(float(r.lat), float(r.lon))
+                al = res[res.margin > 0] if len(res) else res
+                top = al.iloc[0] if len(al) else None
+                summary.append(dict(receiver=f"{r.lat:.2f}, {r.lon:.2f} ({zone})",
+                                    freq=f"{r.freq_MHz:.1f} MHz", in_band=len(res),
+                                    alerts=len(al),
+                                    worst=f"{top['name']} {top.margin:+.1f} dB" if top is not None else "—"))
+                if len(al):
+                    details.append((f"{r.lat:.2f},{r.lon:.2f} @ {r.freq_MHz:.0f} MHz ({zone})",
+                                    al[["name", "adm", "is_gso", "elev", "margin"]].head(8)))
+            if summary:
+                st.markdown(html_table(pd.DataFrame(summary)), unsafe_allow_html=True)
+                for title, dfd in details:
+                    st.markdown(f"*threats — {title}*")
+                    st.markdown(html_table(dfd), unsafe_allow_html=True)
+
     left, right = st.columns([1.1, 1], gap="large")
     with right:
         f = st.radio("filter", ["ALERT", "all"], horizontal=True, label_visibility="collapsed")
         view = sl if f == "all" else sl[sl.review_status == "ALERT"]
-        label = (view.sat_name.fillna("?") + "  ·  " + view.adm.fillna("?")
+        TAG = {"ALERT": "🔴", "visible": "🟡", "not_visible": "⚪", "needs_data": "🟣"}
+        label = (view.review_status.map(TAG).fillna("·") + " "
+                 + view.sat_name.fillna("?") + " · " + view.adm.fillna("?")
                  + view.worst_margin_db.map(lambda m: f"  ({m:+.1f} dB)" if pd.notna(m) else ""))
         pick = st.selectbox(f"shortlist ({len(view)})", view.sat_ntc_id,
                             format_func=lambda n: label[view.sat_ntc_id == n].iloc[0])
@@ -264,6 +386,8 @@ def main():
 
     with left:
         map_panel(ific, int(pick), bool(srow.is_gso), dark)
+        st.caption("Interfering bandwidth — satellite emission vs Finnish RX channel")
+        spectrum_panel(ific, int(pick), dark)
 
     with right:
         c = STATUS_COLOR.get(srow.review_status, "#718096")
@@ -292,9 +416,9 @@ def main():
 
         # affected part of Finland (land + maritime)
         reg, aff = affected_area(ific, int(pick), bool(srow.is_gso))
-        st.markdown("**Affected part of Finland** (footprint ∩ territory)")
+        st.markdown("**Affected part of Finland** (area over the Article-21 limit)")
         a1, a2, a3 = st.columns(3)
-        a1.metric("Finnish territory in footprint", f"{reg['pct_territory']:.0f}%")
+        a1.metric("Territory over limit", f"{reg['pct_territory']:.0f}%")
         a2.metric("Maritime (EEZ) affected",
                   "yes" if reg["includes_maritime"] else "no",
                   f"{reg['pct_maritime']:.0f}% of sea" if reg["includes_maritime"] else None)
