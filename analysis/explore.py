@@ -24,8 +24,16 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+import os
+import sys
+
 ROOT = Path(__file__).resolve().parent.parent
-XLSX = ROOT / "Traficom_SinceAI_Frequencies_of_interest_v05112026.xlsx"
+# Protected-stations workbook: CLI arg > env var > the default synthetic file.
+# To swap in your own list (same column ORDER), just pass its path:
+#     uv run python analysis/explore.py /path/to/your_stations.xlsx
+_DEFAULT_XLSX = ROOT / "Traficom_SinceAI_Frequencies_of_interest_v05112026.xlsx"
+XLSX = Path(sys.argv[1]) if len(sys.argv) > 1 else \
+    Path(os.environ.get("STATIONS_XLSX", _DEFAULT_XLSX))
 DB = ROOT / "analysis" / "frequencies.db"
 PLOTS = ROOT / "analysis" / "plots"
 PLOTS.mkdir(parents=True, exist_ok=True)
@@ -87,9 +95,25 @@ def band_label(mhz):
     return "EHF (>30 GHz)"
 
 
+def _detect_data_start(full):
+    """First row whose first cell is a numeric station number -- robust to a
+    different preamble length in a swapped-in workbook."""
+    for i, v in enumerate(full.iloc[:, 0]):
+        if pd.isna(v):                 # NaN is a float -> must skip explicitly
+            continue
+        try:
+            float(v)
+            return i
+        except (TypeError, ValueError):
+            continue
+    raise SystemExit(f"No numeric station-number column found in {XLSX}. "
+                     "Expected the same column ORDER as the reference workbook.")
+
+
 def load():
-    raw = pd.read_excel(XLSX, header=None, skiprows=FIRST_DATA_ROW)
-    raw = raw.iloc[:, : len(COLS)]
+    print(f"[explore] loading stations from {XLSX}")
+    full = pd.read_excel(XLSX, header=None)
+    raw = full.iloc[_detect_data_start(full):, : len(COLS)].copy()
     raw.columns = COLS
     df = raw[raw["station_no"].notna()].copy()
 

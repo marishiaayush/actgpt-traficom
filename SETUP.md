@@ -64,6 +64,35 @@ uv run streamlit run dashboard.py          # opens http://localhost:8501
   **download + process** them in-app.
 - **🧭 Bring your own receiver** — score any lat/lon + RX band (land or maritime).
 
+## Swap in your own protected-station list
+
+The protected stations (the "antennae to protect") come from one workbook. To
+replace the whole list with your own — even a huge one — just point `explore.py`
+at it and rebuild:
+
+```bash
+# 1. rebuild the Finnish reference from YOUR workbook (any path / filename)
+uv run python analysis/explore.py /path/to/your_stations.xlsx
+#    (or: export STATIONS_XLSX=/path/to/your_stations.xlsx)
+
+# 2. re-run the pipeline so the triage uses the new stations
+uv run python analysis/pipeline.py 3074     # repeat for other processed IFICs
+```
+
+Refresh the dashboard — the shortlist, maps, and PFD now reflect the new list.
+
+**Requirements for the new workbook:**
+- **Same column ORDER** as the reference (parsing is positional: station no,
+  licence class, lon, lat, ground/mast height, mast type, channel bw, TX freq,
+  RX freq, ant heights, gain, emission, tx bw, direction, polarisation, power,
+  power unit, …). Column *names* and any preamble rows don't matter — the data
+  start row is auto-detected.
+- **WGS84** lon/lat; frequencies like `"87.900 MHz"` / `"300k"`; power with a
+  unit column (`W` / `kW` / `mW`).
+
+Scale: the loader + frequency-overlap are indexed, so a very large list is fine;
+the pipeline's per-notice geometry/PFD don't grow with station count.
+
 ## 6. Share a read-only demo (no server, free)
 
 ```bash
