@@ -23,7 +23,8 @@ sys.path.insert(0, str(ROOT / "analysis"))
 APP_DB = ROOT / "analysis" / "app.db"
 
 st.set_page_config(page_title="ACT-GPT · Traficom interference triage",
-                   page_icon="🛰️", layout="wide")
+                   page_icon="🛰️", layout="wide",
+                   initial_sidebar_state="expanded")
 
 STATUS_COLOR = {"ALERT": "#e53e3e", "visible": "#d69e2e",
                 "not_visible": "#718096", "needs_data": "#a0aec0"}
@@ -143,10 +144,12 @@ def orbit_track(ific, ntc, is_gso):
 # --------------------------------------------------------------------------
 # visual panel
 # --------------------------------------------------------------------------
-def map_panel(ific, ntc, is_gso, dark, clicked, key):
+def map_panel(ific, ntc, is_gso, dark, focused, key):
     """Zoomable mapbox view: protected stations, maritime (EEZ) border, the
     illuminated part of Finland, affected stations (land/maritime), orbit track.
-    Affected markers are clickable (on_select) and the clicked one is enlarged."""
+    `focused` station is enlarged and the map recenters on it; markers are also
+    clickable (on_select)."""
+    clicked = focused
     style = "carto-darkmatter" if dark else "carto-positron"
     allst = q("SELECT station_no, lat, lon, licence_class FROM protected_stations "
               "WHERE lat IS NOT NULL")
@@ -188,8 +191,13 @@ def map_panel(ific, ntc, is_gso, dark, clicked, key):
                 name="orbit ground track", hoverinfo="skip"))
 
     lab = "#e2e8f0" if dark else "#1a202c"
+    ctr, zoom = dict(lat=64.5, lon=26.0), 3.4
+    if clicked is not None and len(aff):
+        fr = aff[aff.station_no == clicked]
+        if len(fr):
+            ctr, zoom = dict(lat=float(fr.lat.iloc[0]), lon=float(fr.lon.iloc[0])), 6.0
     fig.update_layout(
-        map=dict(style=style, center=dict(lat=64.5, lon=26.0), zoom=3.4),
+        map=dict(style=style, center=ctr, zoom=zoom),
         height=600, margin=dict(l=0, r=0, t=0, b=0),
         legend=dict(orientation="h", y=-0.03, font=dict(size=13, color=lab),
                     bgcolor="rgba(0,0,0,0)"),
@@ -400,11 +408,23 @@ def main():
         pick = st.selectbox(f"shortlist ({len(view)})", view.sat_ntc_id,
                             format_func=lambda n: label[view.sat_ntc_id == n].iloc[0])
         srow = view[view.sat_ntc_id == pick].iloc[0]
+        # focus a station -> highlighted on the map. Driven by THIS selector OR a
+        # map click (synced): map click writes the selector's state before it renders.
+        affz = affected_stations(ific, int(pick))
+        mapkey = f"map_{ific}_{pick}"
+        focuskey = f"focus_{ific}_{pick}"
+        clicked = clicked_from(mapkey)
+        if (clicked is not None and clicked in set(affz.station_no)
+                and st.session_state.get(focuskey) != clicked):
+            st.session_state[focuskey] = clicked
+        focused = None
+        if len(affz):
+            focused = st.selectbox("🔦 focus a station (or click one on the map)",
+                                   [None] + [int(n) for n in affz.station_no], key=focuskey,
+                                   format_func=lambda s: "— none —" if s is None else f"station {s}")
 
-    mapkey = f"map_{ific}_{pick}"
-    clicked = clicked_from(mapkey)
     with left:
-        map_panel(ific, int(pick), bool(srow.is_gso), dark, clicked, mapkey)
+        map_panel(ific, int(pick), bool(srow.is_gso), dark, focused, mapkey)
         st.caption("Interfering bandwidth — satellite emission vs Finnish RX channel")
         spectrum_panel(ific, int(pick), dark)
 
@@ -451,16 +471,16 @@ def main():
             scroll=True), unsafe_allow_html=True)
 
         st.markdown(f"**Affected protected stations ({len(aff)})**")
-        if clicked and clicked in set(aff.station_no):
-            st.caption(f"📍 selected on map: station {clicked}")
+        if focused and focused in set(aff.station_no):
+            st.caption(f"📍 focused: station {focused} (highlighted on the map)")
         if len(aff):
             tdf = (aff[["station_no", "zone", "overlap_freq_mhz", "margin"]]
                    .round({"overlap_freq_mhz": 2, "margin": 1})
                    .rename(columns={"overlap_freq_mhz": "freq (MHz)"}))
-            tdf.insert(0, "", ["📍" if int(n) == clicked else "" for n in tdf.station_no])
-            if clicked in set(tdf.station_no):      # clicked row first
-                tdf = pd.concat([tdf[tdf.station_no == clicked],
-                                 tdf[tdf.station_no != clicked]])
+            tdf.insert(0, "", ["📍" if int(n) == focused else "" for n in tdf.station_no])
+            if focused in set(tdf.station_no):      # focused row first
+                tdf = pd.concat([tdf[tdf.station_no == focused],
+                                 tdf[tdf.station_no != focused]])
             st.markdown(html_table(tdf, scroll=True), unsafe_allow_html=True)
 
 
