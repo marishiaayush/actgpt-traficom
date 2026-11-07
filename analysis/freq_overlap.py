@@ -21,6 +21,7 @@ Run:  uv run python analysis/freq_overlap.py
 """
 
 import sqlite3
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,9 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import adjacent
 
 ROOT = Path(__file__).resolve().parent.parent
 SRS = ROOT / "analysis" / "srs3074.db"
@@ -68,22 +72,36 @@ def load_bands():
 
 
 def compute_overlap(p, s):
+    """Emit CO-channel pairs (bands intersect) AND ADJACENT pairs (within a
+    bandwidth-scaled guard but not overlapping). Each row carries:
+      proximity   : 'co' or 'adjacent'
+      offset_mhz  : frequency gap to the victim (0 for co-channel)
+      interf_freq_mhz : frequency where interference lands (used downstream for
+                   the Article-21 limit / PFD). Co = overlap midpoint;
+                   adjacent = the victim's frequency (where OOBE spills in).
+    """
     rows = []
     lo = p["lo"].to_numpy(); hi = p["hi"].to_numpy()
     for b in s.itertuples():
-        m = (b.lo <= hi) & (lo <= b.hi)          # vectorized interval overlap
-        if not m.any():
-            continue
-        hit = p[m]
-        ov_lo = np.maximum(b.lo, hit["lo"].to_numpy())
-        ov_hi = np.minimum(b.hi, hit["hi"].to_numpy())
-        for i, st in enumerate(hit.itertuples()):
+        bw = max(b.hi - b.lo, 0.0)
+        guard = adjacent.guard_mhz(bw)
+        co = (b.lo <= hi) & (lo <= b.hi)
+        near = (b.lo - guard <= hi) & (lo <= b.hi + guard) & ~co
+        for i in np.where(co)[0]:
+            st = p.iloc[i]
+            mid = (max(b.lo, st.lo) + min(b.hi, st.hi)) / 2.0
             rows.append((b.ntc_id, b.adm, b.lo, b.hi, st.station_no,
-                         st.licence_class, st.tx_freq_mhz,
-                         float(ov_lo[i]), float(ov_hi[i]), st.band))
+                         st.licence_class, st.tx_freq_mhz, "co", 0.0,
+                         float(mid), st.band))
+        for i in np.where(near)[0]:
+            st = p.iloc[i]
+            gap = max(b.lo - st.hi, st.lo - b.hi, 0.0)  # positive separation
+            rows.append((b.ntc_id, b.adm, b.lo, b.hi, st.station_no,
+                         st.licence_class, st.tx_freq_mhz, "adjacent",
+                         float(gap), float(st.tx_freq_mhz), st.band))
     cols = ["sat_ntc_id", "adm", "sat_lo_mhz", "sat_hi_mhz", "station_no",
-            "licence_class", "station_freq_mhz", "overlap_lo_mhz",
-            "overlap_hi_mhz", "band"]
+            "licence_class", "station_freq_mhz", "proximity", "offset_mhz",
+            "interf_freq_mhz", "band"]
     return pd.DataFrame(rows, columns=cols)
 
 
@@ -93,7 +111,9 @@ def save_and_report(ov):
     con.close()
 
     print(f"\n{'='*58}\nFREQUENCY-OVERLAP CANDIDATES (IFIC 3074 downlinks vs FIN)\n{'='*58}")
-    print(f"overlap pairs           : {len(ov)}")
+    print(f"total pairs             : {len(ov)}")
+    print(f"  co-channel            : {(ov['proximity']=='co').sum()}")
+    print(f"  adjacent-band         : {(ov['proximity']=='adjacent').sum()}")
     print(f"satellite notices hit   : {ov['sat_ntc_id'].nunique()} "
           f"(of 196 total)")
     print(f"protected stations hit  : {ov['station_no'].nunique()}")

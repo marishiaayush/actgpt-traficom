@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pfd import (slant_range_km, pfd_dbw_m2, elevation_from_central_angle,
                  central_angle_deg, GSO_ALT_KM)
 import article21
+import adjacent
 
 ROOT = Path(__file__).resolve().parent.parent
 SRS = ROOT / "analysis" / "srs3074.db"
@@ -55,8 +56,9 @@ ELEV_SWEEP = np.arange(5, 91, 5)   # achievable elevations to test
 
 def load_inputs():
     srs = sqlite3.connect(SRS)
-    ov = pd.read_sql("""SELECT sat_ntc_id, adm, station_no, overlap_lo_mhz,
-                               overlap_hi_mhz, licence_class, band
+    ov = pd.read_sql("""SELECT sat_ntc_id, adm, station_no, interf_freq_mhz,
+                               proximity, offset_mhz, sat_lo_mhz, sat_hi_mhz,
+                               licence_class, band
                         FROM fin_freq_overlap""", srs)
 
     # per-notice orbit classification
@@ -93,6 +95,7 @@ def load_inputs():
 
     fin = sqlite3.connect(FIN)
     st = pd.read_sql("SELECT station_no, lat, lon FROM v_clean", fin)
+    st = st.drop_duplicates("station_no")      # some station_no repeat in v_clean
     fin.close()
 
     cand = pd.DataFrame({"ntc_id": ov["sat_ntc_id"].unique()})
@@ -139,8 +142,10 @@ def matched_eirp_eff(emis_rows, freq_mhz, ref_bw_hz):
     return best
 
 
-def score_pair(nrow, srow, freq_mhz, cpfd_rows, emis_rows):
-    """Return dict with geometry + PFD margin for one (notice, station) pair."""
+def score_pair(nrow, srow, freq_mhz, cpfd_rows, emis_rows, fdr=0.0):
+    """Return dict with geometry + PFD margin for one (notice, station) pair.
+    `fdr` (dB) is the adjacent-band frequency-dependent rejection subtracted from
+    the interfering PFD (0 for co-channel)."""
     lat, lon = srow["lat"], srow["lon"]
     # ---- step 2: achievable elevations ----
     if nrow["is_gso"]:
@@ -192,6 +197,7 @@ def score_pair(nrow, srow, freq_mhz, cpfd_rows, emis_rows):
     for e, d in zip(elevs, slants):
         lim, _ = article21.limit(freq_mhz, e)
         pfd = declared if src == "declared" else pfd_dbw_m2(eirp_eff, d)
+        pfd -= fdr                              # adjacent-band rejection
         margin = pfd - lim
         rec = {"elev": float(e), "slant_km": float(d), "pfd": pfd,
                "limit": lim, "margin": margin}
@@ -209,13 +215,17 @@ def main():
     for r in ov.itertuples():
         if r.sat_ntc_id not in notice.index or r.station_no not in st.index:
             continue
-        freq_mhz = (r.overlap_lo_mhz + r.overlap_hi_mhz) / 2.0
+        freq_mhz = r.interf_freq_mhz
+        sat_bw = r.sat_hi_mhz - r.sat_lo_mhz
+        fdr = adjacent.fdr_db(r.offset_mhz, sat_bw) if r.proximity == "adjacent" else 0.0
         res = score_pair(notice.loc[r.sat_ntc_id], st.loc[r.station_no],
                          freq_mhz, cpfd_by_ntc.get(r.sat_ntc_id),
-                         emis_by_ntc.get(r.sat_ntc_id))
+                         emis_by_ntc.get(r.sat_ntc_id), fdr)
         res.update({"sat_ntc_id": r.sat_ntc_id, "adm": r.adm,
                     "station_no": r.station_no, "band": r.band,
                     "overlap_freq_mhz": round(freq_mhz, 3),
+                    "proximity": r.proximity, "offset_mhz": round(r.offset_mhz, 2),
+                    "fdr_db": round(fdr, 1),
                     "is_gso": bool(notice.loc[r.sat_ntc_id, "is_gso"])})
         out.append(res)
     df = pd.DataFrame(out).sort_values("margin", ascending=False,
@@ -233,15 +243,18 @@ def main():
     sc = df[df.status == "scored"]
     print(f"\n-- PFD-ASSESSED --  {len(sc)} pairs   "
           f"(source: {sc['pfd_source'].value_counts().to_dict()})")
+    print(f"   proximity: {sc['proximity'].value_counts().to_dict()}")
     exceed = sc[sc.margin > 0]
     print(f"   exceeding Article-21 limit (margin>0): {len(exceed)} pairs, "
           f"{exceed.sat_ntc_id.nunique()} notices, {exceed.station_no.nunique()} stations")
+    print(f"     of which co-channel: {(exceed.proximity=='co').sum()}, "
+          f"adjacent-band: {(exceed.proximity=='adjacent').sum()}")
     print("   NOTE: 'computed' = worst-case (main beam on station); conservative upper bound")
     print("\nTOP 10 PFD exceedances (worst margin):")
-    cols = ["sat_ntc_id","adm","station_no","overlap_freq_mhz","is_gso","elev",
-            "pfd","limit","margin","pfd_source"]
+    cols = ["sat_ntc_id","adm","station_no","overlap_freq_mhz","proximity",
+            "offset_mhz","fdr_db","is_gso","margin","pfd_source"]
     show = sc[cols].head(10).copy()
-    for c in ["elev","pfd","limit","margin"]:
+    for c in ["offset_mhz", "fdr_db", "margin"]:
         show[c] = show[c].round(1)
     print(show.to_string(index=False))
 
@@ -263,14 +276,14 @@ def make_plots(df):
     sc = df[df.status == "scored"].copy()
     fig, ax = plt.subplots(1, 2, figsize=(14, 5.5))
 
-    # (a) worst-case PFD margin distribution, by source
-    for src, color in [("computed","#e53e3e"), ("declared","#2b6cb0")]:
-        d = sc[sc.pfd_source == src]["margin"].dropna()
+    # (a) worst-case PFD margin distribution, co-channel vs adjacent-band
+    for prox, color in [("co","#2b6cb0"), ("adjacent","#d69e2e")]:
+        d = sc[sc.proximity == prox]["margin"].dropna()
         if len(d):
-            ax[0].hist(d, bins=45, alpha=0.6, color=color, label=f"{src} ({len(d)})")
+            ax[0].hist(d, bins=45, alpha=0.6, color=color, label=f"{prox} ({len(d)})")
     ax[0].axvline(0, color="k", ls="--", lw=1)
     ax[0].set_title("Worst-case PFD margin (margin>0 = exceeds Article-21 limit)\n"
-                    "computed = main-beam-on-station upper bound")
+                    "co-channel vs adjacent-band (after FDR)")
     ax[0].set_xlabel("margin (dB)  [PFD - limit]"); ax[0].set_ylabel("pairs")
     ax[0].legend()
 

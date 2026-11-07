@@ -223,6 +223,23 @@ Power source is TIERED with provenance (`pfd_source`):
 2. **computed** - worst-case EIRP = `grp.pwr_max + s_beam.gain` (matched beam),
    as a power spectral density in the reference bandwidth. Conservative.
 
+### Adjacent-band tier (co-channel is the floor, not the whole picture)
+A satellite emission in a band *next to* a protected channel can still interfere
+via transmitter out-of-band/spurious emission and victim receiver selectivity.
+So Stage 1 also emits **adjacent** pairs (within a bandwidth-scaled guard but not
+overlapping), and Stage 3 subtracts a **frequency-dependent rejection** from the
+interfering PFD:  `PFD_effective = PFD - FDR(offset)`  (adjacent.py). FDR grows
+with the frequency gap (simplified ITU-R SM.1541-style mask), so a close strong
+neighbour still flags while a distant one self-attenuates out of the queue.
+- Pairs: 8,721 co-channel + ~31k adjacent (most heavily rejected by FDR).
+- Result on 3074: **179 adjacent-band exceedances**, but they fall on the SAME
+  22 notices / 41 stations already flagged co-channel (0 new actors) -> adjacent
+  analysis *reinforces* the co-channel candidates here rather than expanding
+  them. The capability still matters (the brief asks for it; another IFIC could
+  surface new actors) and strengthens the evidence on flagged candidates.
+- Limitation: victim receiver selectivity (ACS) is not in the Finnish dataset,
+  so FDR models the transmitter side with a conservative spurious floor.
+
 ### Two findings that shape the result (and are themselves deliverables)
 1. **Declared PFD doesn't cover the Finnish-overlap frequencies.** 3074's
    declared PFD sits at 1.2 / 5 / 43 GHz; the Finnish overlaps are 1-3 and
