@@ -64,6 +64,8 @@ uv run python analysis/pfd_explainer.py   # interactive PFD vs elevation
 | `pfd.py` | orbital geometry + PFD link-budget primitives |
 | `article21.py` | ITU RR Article 21, Table 21-4 per-band PFD limits |
 | `pfd_score.py` | steps 2–3 — geometry + PFD margin, ranked triage |
+| `adjacent.py` | adjacent-band guard + frequency-dependent rejection (FDR) |
 | `pfd_explainer.py`, `map_interactive.py` | interactive explainer figures |
+| `footprint_3d.py` | 3D visibility-cone footprints of flagged satellites over Finland |
 
 Figures live in `analysis/plots/`.
