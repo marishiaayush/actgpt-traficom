@@ -46,9 +46,10 @@ uv run python analysis/mdb_to_sqlite.py path/to/ific3074.mdb --out analysis/srs3
 uv run python analysis/explore.py         # synthetic protected stations -> frequencies.db
 uv run python analysis/load_m4.py         # M4 allocation table
 
-# 3. the pipeline
-uv run python analysis/freq_overlap.py    # step 1: frequency overlap
-uv run python analysis/pfd_score.py       # steps 2-3: geometry + PFD triage
+# 3. the pipeline -- ONE entry point (consolidated backend)
+uv run python analysis/pipeline.py 3074   # mdb->sqlite -> overlap -> SGP4 ->
+                                          # PFD -> shortlist, all into app.db
+# (or run the stages individually: freq_overlap.py, geometry_sgp4.py, pfd_score.py)
 
 # explainers
 uv run python analysis/map_interactive.py # protected-station map
@@ -61,6 +62,7 @@ uv run python analysis/pfd_explainer.py   # interactive PFD vs elevation
 |------|------|
 | `explore.py` | load/clean the synthetic protected-station XLSX → SQLite + plots |
 | `load_m4.py` | load the Traficom M4 allocation table |
+| `pipeline.py` | **backend entry point**: run_ific() → consolidated `app.db` (publications + shortlist + results, tagged by IFIC) |
 | `mdb_to_sqlite.py` | convert ITU IFIC `.mdb` → SQLite (via mdbtools) |
 | `freq_overlap.py` | step 1 — satellite-vs-Finland frequency overlap |
 | `pfd.py` | orbital geometry + PFD link-budget primitives |

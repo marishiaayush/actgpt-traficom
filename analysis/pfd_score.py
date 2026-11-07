@@ -48,8 +48,9 @@ import article21
 import adjacent
 
 ROOT = Path(__file__).resolve().parent.parent
-SRS = ROOT / "analysis" / "srs3074.db"
-FIN = ROOT / "analysis" / "frequencies.db"
+import os
+SRS = Path(os.environ.get("SRS_DB", ROOT / "analysis" / "srs3074.db"))
+FIN = Path(os.environ.get("FIN_DB", ROOT / "analysis" / "frequencies.db"))
 PLOTS = ROOT / "analysis" / "plots"
 ELEV_SWEEP = np.arange(5, 91, 5)   # achievable elevations to test
 MIN_ELEV = 5.0                     # horizon-visibility threshold (matches SGP4)

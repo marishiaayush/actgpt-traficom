@@ -35,7 +35,8 @@ from sgp4.api import Satrec, WGS72
 from skyfield.api import load, wgs84, EarthSatellite
 
 ROOT = Path(__file__).resolve().parent.parent
-SRS = ROOT / "analysis" / "srs3074.db"
+import os
+SRS = Path(os.environ.get("SRS_DB", ROOT / "analysis" / "srs3074.db"))
 PLOTS = ROOT / "analysis" / "plots"
 
 MU, R_E = 398600.4418, 6378.137      # km^3/s^2, km

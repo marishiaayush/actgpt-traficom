@@ -34,8 +34,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import adjacent
 
 ROOT = Path(__file__).resolve().parent.parent
-SRS = ROOT / "analysis" / "srs3074.db"
-FIN = ROOT / "analysis" / "frequencies.db"
+import os
+SRS = Path(os.environ.get("SRS_DB", ROOT / "analysis" / "srs3074.db"))
+FIN = Path(os.environ.get("FIN_DB", ROOT / "analysis" / "frequencies.db"))
 PLOTS = ROOT / "analysis" / "plots"
 
 
