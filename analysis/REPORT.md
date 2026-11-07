@@ -210,17 +210,24 @@ broadcast_tx`, NOT treated as genuine receivers; their interference model
 Result: **196 -> 150 notices**, ~8.9k co-channel pairs, written to
 `srs3074.db :: fin_freq_overlap` (with `station_role`, `victim_freq_mhz`).
 
-### Stage 2 - geometry  (pfd.py)
-Does the satellite *potentially* become visible from that station, and at what
-elevation? (This is POTENTIAL visibility only -- it does NOT establish that the
-beam illuminates the station, nor when/for how long. Screening approximation.)
-- **non-GSO**: the ground track reaches latitude = inclination (prograde) or
-  180-inclination (retrograde, e.g. sun-synchronous ~98deg reaches ~82N). If
-  station |lat| <= that, the sub-track can pass overhead; else the best
-  elevation at its peak latitude. Elevations are swept.
+### Stage 2 - geometry  (pfd.py, geometry_sgp4.py)
+Does the satellite become visible from Finland, and at what elevation?
+- **non-GSO -- real SGP4 (geometry_sgp4.py, authoritative).** We synthesize a
+  representative constellation from the notice's real orbital planes and
+  propagate it with **SGP4 (Skyfield, MIT)** to get the true max elevation over
+  Finland. If `max_elev < 5 deg` the notice **cannot be seen from Finland** ->
+  `not_visible_sgp4` (dropped); otherwise the elevation sweep is capped at the
+  real max. This REPLACED a crude latitude approximation that floored
+  below-horizon cases to 5deg and **wrongly flagged 2 equatorial constellations**
+  (NUSANTARA, incl 2deg, max elev -25deg) -- now correctly dropped.
+  *(Fallback, if SGP4 not run: ground track reaches latitude = inclination, or
+  180-incl for retrograde. Potential visibility only.)*
 - **GSO**: fixed elevation from station lat/lon vs the slot longitude
   (`geo.long_nom`); below the horizon -> `not_visible_gso` (dropped).
 Slant range: `d = sqrt((R*sin e)^2 + h(2R+h)) - R*sin e`.
+Run order: `freq_overlap.py` -> `geometry_sgp4.py` -> `pfd_score.py`.
+`geometry_sgp4.py` also yields real passes/day, view-minutes, coverage% per
+notice (table `fin_geom_sgp4`) -- the temporal detail the crude model lacked.
 
 ### Stage 3 - PFD vs Article-21 limit  (pfd_score.py, article21.py)
 PFD link budget:  `PFD = EIRP_eff - 20*log10(d_m) - 10.99  [dBW/m2]`
@@ -296,8 +303,9 @@ it is not directly the criterion here; see expert question #1.)
 
 ### Current output (triage queue), table `srs3074.db :: fin_pfd_score`
 *(Receive-band / RX fix + geometry fix applied; plots suffixed `_v2`.)*
-- **~25 notices / ~40 stations** raise **screening alerts** (worst-case PFD >
+- **~23 notices / ~33 stations** raise **screening alerts** (worst-case PFD >
   limit under the stated assumptions) -> review. NOT confirmed interference.
+  (SGP4 visibility dropped 2 equatorial false positives vs the pre-SGP4 run.)
 - Many notices reach Finland but carry no usable power -> needs-data queue
   (e.g. a 160 km USA LEO nearly overhead).
 - Pairs at frequencies with no Table 21-4 band -> need another criterion.

@@ -88,8 +88,13 @@ def coverage_over_finland(sats):
 
 def main():
     con = sqlite3.connect(SRS)
-    flag = pd.read_sql("""SELECT DISTINCT sat_ntc_id, adm FROM fin_pfd_score
-                          WHERE status='scored' AND margin>0 AND is_gso=0""", con)
+    # ALL non-GSO candidate notices (from Stage 1), so the triage can use SGP4
+    # visibility for every one -- not just the already-flagged ones. Sourced
+    # from fin_freq_overlap (not fin_pfd_score) to avoid a circular dependency:
+    # run order is freq_overlap -> geometry_sgp4 -> pfd_score.
+    flag = pd.read_sql("""SELECT DISTINCT o.sat_ntc_id, o.adm
+                          FROM fin_freq_overlap o
+                          WHERE o.sat_ntc_id IN (SELECT ntc_id FROM non_geo)""", con)
     rows, example = [], {}
     for r in flag.itertuples():
         pl = pd.read_sql("""SELECT inclin_ang, op_ht_km, long_asc FROM orbit
@@ -119,12 +124,12 @@ def main():
         df[c] = df[c].round(1)
     con2 = sqlite3.connect(SRS); df.to_sql("fin_geom_sgp4", con2, if_exists="replace", index=False); con2.close()
 
-    print(f"\n{'='*66}\nSGP4 GEOMETRY over Finland for flagged non-GSO notices\n{'='*66}")
+    print(f"\n{'='*66}\nSGP4 GEOMETRY over Finland for non-GSO candidate notices\n{'='*66}")
     print(df.to_string(index=False))
     spurious = df[~df.visible_from_FIN]
-    print(f"\n*** {len(spurious)} flagged notice(s) are NOT actually visible from "
-          f"Finland (max elev < {MIN_ELEV} deg) -> likely FALSE POSITIVES from the "
-          f"crude geometry:")
+    print(f"\n*** {len(spurious)} candidate notice(s) are NOT actually visible from "
+          f"Finland (max elev < {MIN_ELEV} deg) -> the crude geometry would have "
+          f"scored them anyway; the triage now drops them:")
     print(spurious[["sat_ntc_id","adm","sat_name","incl","max_elev_deg"]].to_string(index=False))
 
     make_plot(df, example)

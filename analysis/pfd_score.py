@@ -52,6 +52,7 @@ SRS = ROOT / "analysis" / "srs3074.db"
 FIN = ROOT / "analysis" / "frequencies.db"
 PLOTS = ROOT / "analysis" / "plots"
 ELEV_SWEEP = np.arange(5, 91, 5)   # achievable elevations to test
+MIN_ELEV = 5.0                     # horizon-visibility threshold (matches SGP4)
 
 
 def load_inputs():
@@ -91,6 +92,12 @@ def load_inputs():
     emis = emis.dropna(subset=["freq_min", "freq_max", "pwr_max", "gain"])
     emis_by_ntc = {k: v[["freq_min","freq_max","pwr_max","gain","bdwdth"]].values
                    for k, v in emis.groupby("ntc_id")}
+    # SGP4 real-geometry visibility per non-GSO notice (if geometry_sgp4.py ran)
+    try:
+        sg = pd.read_sql("SELECT sat_ntc_id, max_elev_deg FROM fin_geom_sgp4", srs)
+        sgp4_elev = dict(zip(sg.sat_ntc_id, sg.max_elev_deg))
+    except Exception:
+        sgp4_elev = {}
     srs.close()
 
     fin = sqlite3.connect(FIN)
@@ -105,7 +112,7 @@ def load_inputs():
         notice[c] = pd.to_numeric(notice[c], errors="coerce")
     notice["is_gso"] = notice["long_nom"].notna()
     return (ov, notice.set_index("ntc_id"), st.set_index("station_no"),
-            cpfd_by_ntc, emis_by_ntc)
+            cpfd_by_ntc, emis_by_ntc, sgp4_elev)
 
 
 def matched_declared_pfd(cpfd_rows, freq_mhz, ref_bw_hz):
@@ -151,10 +158,13 @@ def matched_eirp_eff(emis_rows, freq_mhz, ref_bw_hz):
     return best
 
 
-def score_pair(nrow, srow, freq_mhz, cpfd_rows, emis_rows, fdr=0.0):
+def score_pair(nrow, srow, freq_mhz, cpfd_rows, emis_rows, fdr=0.0,
+               sgp4_max_elev=None):
     """Return dict with geometry + PFD margin for one (notice, station) pair.
     `fdr` (dB) is the adjacent-band frequency-dependent rejection subtracted from
-    the interfering PFD (0 for co-channel)."""
+    the interfering PFD (0 for co-channel). `sgp4_max_elev` (deg, non-GSO) is the
+    real SGP4 max elevation over Finland -- authoritative visibility + the real
+    elevation cap, replacing the crude latitude approximation when available."""
     lat, lon = srow["lat"], srow["lon"]
     # ---- step 2: achievable elevations ----
     if nrow["is_gso"]:
@@ -171,19 +181,28 @@ def score_pair(nrow, srow, freq_mhz, cpfd_rows, emis_rows, fdr=0.0):
             return {"status": "no_orbit_data", "elev": np.nan, "slant_km": np.nan,
                     "pfd": np.nan, "limit": np.nan, "margin": np.nan,
                     "pfd_source": None, "alt_km": np.nan}
-        incl = nrow["incl"] if pd.notna(nrow["incl"]) else 90.0
-        # max ground-track latitude = inclination (prograde) or 180-incl
-        # (retrograde, e.g. sun-synchronous ~98deg reaches ~82N). This is
-        # POTENTIAL visibility only -- not proof the beam illuminates the
-        # station, nor for how long. A screening approximation.
-        max_track_lat = incl if incl <= 90 else 180 - incl
-        if abs(lat) <= max_track_lat:
-            elevs = ELEV_SWEEP                      # sub-track can pass overhead
-        else:
-            el_max = elevation_from_central_angle(abs(lat) - max_track_lat, alt)
-            elevs = ELEV_SWEEP[ELEV_SWEEP <= max(el_max, 5)]
+        if sgp4_max_elev is not None:
+            # authoritative: real SGP4 geometry over Finland
+            if sgp4_max_elev < MIN_ELEV:
+                return {"status": "not_visible_sgp4", "elev": float(sgp4_max_elev),
+                        "slant_km": np.nan, "pfd": np.nan, "limit": np.nan,
+                        "margin": np.nan, "pfd_source": None, "alt_km": alt}
+            elevs = ELEV_SWEEP[ELEV_SWEEP <= sgp4_max_elev]
             if len(elevs) == 0:
-                elevs = np.array([max(el_max, 1.0)])
+                elevs = np.array([MIN_ELEV])
+        else:
+            # fallback: crude latitude approximation. Max ground-track latitude =
+            # inclination (prograde) or 180-incl (retrograde, e.g. sun-sync ~98deg
+            # reaches ~82N). POTENTIAL visibility only -- a screening approximation.
+            incl = nrow["incl"] if pd.notna(nrow["incl"]) else 90.0
+            max_track_lat = incl if incl <= 90 else 180 - incl
+            if abs(lat) <= max_track_lat:
+                elevs = ELEV_SWEEP
+            else:
+                el_max = elevation_from_central_angle(abs(lat) - max_track_lat, alt)
+                elevs = ELEV_SWEEP[ELEV_SWEEP <= max(el_max, 5)]
+                if len(elevs) == 0:
+                    elevs = np.array([max(el_max, 1.0)])
 
     # closest approach over achievable elevations (geometry proxy for all rows)
     slants = np.array([slant_range_km(e, alt) for e in elevs])
@@ -223,8 +242,9 @@ def score_pair(nrow, srow, freq_mhz, cpfd_rows, emis_rows, fdr=0.0):
 
 
 def main():
-    ov, notice, st, cpfd_by_ntc, emis_by_ntc = load_inputs()
-    print(f"scoring {len(ov)} overlap pairs...")
+    ov, notice, st, cpfd_by_ntc, emis_by_ntc, sgp4_elev = load_inputs()
+    print(f"scoring {len(ov)} overlap pairs... (SGP4 visibility for "
+          f"{len(sgp4_elev)} non-GSO notices)")
     out = []
     for r in ov.itertuples():
         if r.sat_ntc_id not in notice.index or r.station_no not in st.index:
@@ -234,7 +254,8 @@ def main():
         fdr = adjacent.fdr_db(r.offset_mhz, sat_bw) if r.proximity == "adjacent" else 0.0
         res = score_pair(notice.loc[r.sat_ntc_id], st.loc[r.station_no],
                          freq_mhz, cpfd_by_ntc.get(r.sat_ntc_id),
-                         emis_by_ntc.get(r.sat_ntc_id), fdr)
+                         emis_by_ntc.get(r.sat_ntc_id), fdr,
+                         sgp4_elev.get(r.sat_ntc_id))
         res.update({"sat_ntc_id": r.sat_ntc_id, "adm": r.adm,
                     "station_no": r.station_no, "band": r.band,
                     "overlap_freq_mhz": round(freq_mhz, 3),
