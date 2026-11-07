@@ -1,3 +1,5 @@
+<p align="center"><img src="Logo.svg" alt="ACT-GPT" width="320"></p>
+
 # actgpt-traficom
 
 **Saving Earth from Space Interferers** — an auditable, AI-assisted workflow that
@@ -6,8 +8,9 @@ protected Finnish radio stations, and produces a ranked, human-reviewable queue.
 
 Built for the *Since AI Hackathon 2026 — Traficom* challenge.
 
-> **New here? Start with the plain-language explainer:** [`analysis/EXPLAIN.md`](analysis/EXPLAIN.md).
-> **Full methodology and findings:** see [`analysis/REPORT.md`](analysis/REPORT.md).
+> **🚀 Clone & run in minutes:** [`SETUP.md`](SETUP.md).
+> **New here? Plain-language explainer:** [`analysis/EXPLAIN.md`](analysis/EXPLAIN.md).
+> **Full methodology and findings:** [`analysis/REPORT.md`](analysis/REPORT.md).
 > **Abbreviations:** [`analysis/GLOSSARY.md`](analysis/GLOSSARY.md).
 
 ## What it does — the funnel
@@ -40,6 +43,9 @@ and presents a two-panel review tool:
   strip** shows the satellite emission vs the Finnish RX channel.
 - **🧭 Bring your own receiver(s)** — score any lat/lon + RX band (land or
   maritime, one or many) against the IFIC.
+- **Reviewer relabel** — human-in-the-loop: flip any satellite ALERT ↔ CLEARED
+  (persisted, with an ✎ override marker).
+- **🗄️ Database tab** — browse the raw tables with highlighted values; relabel.
 - **🔄 ITU watch** — "Check now" for new IFIC publications, with last-checked
   provenance. **🌙 Dark mode** throughout.
 

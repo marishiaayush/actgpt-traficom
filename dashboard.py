@@ -26,7 +26,7 @@ st.set_page_config(page_title="ACT-GPT · Traficom interference triage",
                    page_icon="🛰️", layout="wide",
                    initial_sidebar_state="expanded")
 
-STATUS_COLOR = {"ALERT": "#e53e3e", "visible": "#d69e2e",
+STATUS_COLOR = {"ALERT": "#e53e3e", "CLEARED": "#2f855a", "visible": "#d69e2e",
                 "not_visible": "#718096", "needs_data": "#a0aec0"}
 
 
@@ -43,7 +43,10 @@ def q(sql, params=()):
 
 
 def publications():
-    return q("SELECT * FROM publications ORDER BY ific_no DESC")
+    try:
+        return q("SELECT * FROM publications ORDER BY ific_no DESC")
+    except Exception:
+        return pd.DataFrame()      # app.db not built yet -> sidebar prompts to run
 
 
 def shortlist(ific):
@@ -304,8 +307,119 @@ def html_table(df, scroll=False):
     return f'<div class="actgpt-scroll">{t}</div>' if scroll else t
 
 
+# --------------------------------------------------------------------------
+# reviewer label overrides (human-in-the-loop) -- persisted in app.db
+# --------------------------------------------------------------------------
+OVERRIDE_LABELS = ["ALERT", "CLEARED", "visible", "not_visible", "needs_data"]
+
+
+def _ensure_overrides():
+    con = sqlite3.connect(APP_DB)
+    con.execute("""CREATE TABLE IF NOT EXISTS review_overrides
+        (ific_no INT, sat_ntc_id INT, label TEXT, ts TEXT,
+         PRIMARY KEY(ific_no, sat_ntc_id))""")
+    con.commit(); con.close()
+
+
+def set_override(ific, ntc, label):
+    from datetime import datetime, timezone
+    _ensure_overrides()
+    con = sqlite3.connect(APP_DB)
+    if label is None:
+        con.execute("DELETE FROM review_overrides WHERE ific_no=? AND sat_ntc_id=?",
+                    (int(ific), int(ntc)))
+    else:
+        con.execute("INSERT OR REPLACE INTO review_overrides VALUES (?,?,?,?)",
+                    (int(ific), int(ntc), label,
+                     datetime.now(timezone.utc).isoformat(timespec="seconds")))
+    con.commit(); con.close()
+    q.clear()
+
+
+def get_overrides(ific):
+    _ensure_overrides()
+    d = q("SELECT sat_ntc_id, label FROM review_overrides WHERE ific_no=?", (ific,))
+    return dict(zip(d.sat_ntc_id, d.label)) if len(d) else {}
+
+
+def with_effective_label(sl, ific):
+    ov = get_overrides(ific)
+    sl = sl.copy()
+    sl["label"] = [ov.get(int(n), rs) for n, rs in zip(sl.sat_ntc_id, sl.review_status)]
+    sl["overridden"] = [int(n) in ov for n in sl.sat_ntc_id]
+    return sl
+
+
+# --------------------------------------------------------------------------
+# Database tab -- browse raw data, relabel
+# --------------------------------------------------------------------------
+def database_view(ific, dark):
+    st.subheader("🗄️ Raw data — browse, highlight, relabel")
+    sl = with_effective_label(shortlist(ific), ific)
+    tables = {
+        "Shortlist (relabelable)": sl[["sat_ntc_id", "sat_name", "adm", "is_gso",
+            "review_status", "label", "overridden", "worst_margin_db",
+            "alert_stations", "n_bands"]],
+        "PFD scores": q(f"""SELECT sat_ntc_id, adm, station_no,
+            ROUND(overlap_freq_mhz,2) freq_mhz, proximity, is_gso,
+            ROUND(elev,1) elev, ROUND(margin,1) margin, status, pfd_source
+            FROM fin_pfd_score WHERE ific_no={int(ific)} LIMIT 5000"""),
+        "Frequency overlaps": q(f"""SELECT sat_ntc_id, adm, ROUND(sat_lo_mhz,2) sat_lo,
+            ROUND(sat_hi_mhz,2) sat_hi, station_no, ROUND(victim_freq_mhz,2) rx_mhz,
+            proximity, ROUND(offset_mhz,1) offset, band
+            FROM fin_freq_overlap WHERE ific_no={int(ific)} LIMIT 5000"""),
+        "SGP4 geometry": q(f"SELECT * FROM fin_geom_sgp4 WHERE ific_no={int(ific)}"),
+        "Protected stations (Finland)": q("""SELECT station_no, licence_class, lat, lon,
+            ROUND(tx_freq_mhz,3) tx_mhz, ROUND(rx_freq_mhz,3) rx_mhz, band,
+            ROUND(power_dbw,1) power_dbw FROM protected_stations"""),
+        "M4 allocations": q("""SELECT Services_in_Finland, Sub_band_usage,
+            ROUND(sub_lo_mhz,4) lo_mhz, ROUND(sub_hi_mhz,4) hi_mhz FROM m4_allocations"""),
+        "Publications": q("SELECT * FROM publications"),
+    }
+    name = st.selectbox("table", list(tables))
+    df = tables[name]
+    st.caption(f"{len(df):,} rows")
+
+    def hl_margin(v):
+        try:
+            return "background-color: rgba(229,62,62,0.28)" if float(v) > 0 else ""
+        except Exception:
+            return ""
+    def hl_label(v):
+        return {"ALERT": "background-color: rgba(229,62,62,0.28)",
+                "CLEARED": "background-color: rgba(47,133,90,0.28)",
+                "visible": "background-color: rgba(214,158,46,0.22)"}.get(v, "")
+    sty = df.style
+    if "margin" in df.columns:
+        sty = sty.map(hl_margin, subset=["margin"])
+    if "label" in df.columns:
+        sty = sty.map(hl_label, subset=["label"])
+    if "worst_margin_db" in df.columns:
+        sty = sty.map(hl_margin, subset=["worst_margin_db"])
+    st.dataframe(sty, width='stretch', height=480)
+
+    if name.startswith("Shortlist"):
+        st.markdown("**Relabel a satellite** (reviewer override — persisted)")
+        c1, c2, c3 = st.columns([2, 2, 1])
+        rn = c1.selectbox("satellite", sl.sat_ntc_id,
+                          format_func=lambda n: f"{sl.loc[sl.sat_ntc_id==n,'sat_name'].iloc[0]} ({n})")
+        cur = sl.loc[sl.sat_ntc_id == rn, "label"].iloc[0]
+        new = c2.selectbox("new label", OVERRIDE_LABELS,
+                           index=OVERRIDE_LABELS.index(cur) if cur in OVERRIDE_LABELS else 0)
+        if c3.button("Apply", width='stretch'):
+            set_override(ific, rn, new); st.success(f"{rn} → {new}"); st.rerun()
+        if c3.button("Reset", width='stretch'):
+            set_override(ific, rn, None); st.success(f"{rn} reset to auto"); st.rerun()
+
+
 def main():
     pubs = publications()
+    logo = ROOT / "Logo.svg"
+    if logo.exists():
+        try:
+            st.logo(str(logo), size="large")
+        except Exception:
+            pass
     with st.sidebar:
         st.title("🛰️ ACT-GPT")
         st.caption("ITU IFIC → Finnish interference triage")
@@ -316,7 +430,10 @@ def main():
     st.markdown(BASE_CSS, unsafe_allow_html=True)
     with st.sidebar:
         if pubs.empty:
-            st.warning("No processed publications. Run the pipeline first.")
+            st.warning("No processed publications yet.")
+            st.info("Build `app.db` first:\n\n"
+                    "```\nuv run python analysis/pipeline.py 3074\n```\n\n"
+                    "(needs the IFIC `.mdb` — see SETUP.md)")
             st.stop()
         import poller
         ific = st.selectbox("Publication (IFIC)", pubs.ific_no,
@@ -360,9 +477,19 @@ def main():
             else:
                 st.success("Up to date — no new IFIC.")
 
-    sl = shortlist(ific).sort_values(
-        ["review_status", "worst_margin_db"], ascending=[True, False])
-    st.subheader(f"IFIC {ific} — {int(row.n_alerts)} satellites flagged for review")
+    tab_triage, tab_db = st.tabs(["🛰️  Triage", "🗄️  Database"])
+    with tab_db:
+        database_view(ific, dark)
+    with tab_triage:
+        render_triage(ific, row, dark)
+
+
+def render_triage(ific, row, dark):
+    sl = with_effective_label(
+        shortlist(ific).sort_values(["review_status", "worst_margin_db"],
+                                    ascending=[True, False]), ific)
+    n_alert = int((sl.label == "ALERT").sum())
+    st.subheader(f"IFIC {ific} — {n_alert} satellites flagged for review")
 
     # --- Phase 4: bring your own receiver(s) ---
     with st.expander("🧭 Check your own receiver(s) — land or maritime"):
@@ -400,13 +527,15 @@ def main():
     left, right = st.columns([1.1, 1], gap="large")
     with right:
         f = st.radio("filter", ["ALERT", "all"], horizontal=True, label_visibility="collapsed")
-        view = sl if f == "all" else sl[sl.review_status == "ALERT"]
-        TAG = {"ALERT": "🔴", "visible": "🟡", "not_visible": "⚪", "needs_data": "🟣"}
-        label = (view.review_status.map(TAG).fillna("·") + " "
-                 + view.sat_name.fillna("?") + " · " + view.adm.fillna("?")
-                 + view.worst_margin_db.map(lambda m: f"  ({m:+.1f} dB)" if pd.notna(m) else ""))
+        view = sl if f == "all" else sl[sl.label == "ALERT"]
+        TAG = {"ALERT": "🔴", "CLEARED": "✅", "visible": "🟡",
+               "not_visible": "⚪", "needs_data": "🟣"}
+        disp = (view.label.map(TAG).fillna("·") + " "
+                + view.sat_name.fillna("?") + " · " + view.adm.fillna("?")
+                + view.worst_margin_db.map(lambda m: f"  ({m:+.1f} dB)" if pd.notna(m) else "")
+                + view.overridden.map(lambda o: " ✎" if o else ""))
         pick = st.selectbox(f"shortlist ({len(view)})", view.sat_ntc_id,
-                            format_func=lambda n: label[view.sat_ntc_id == n].iloc[0])
+                            format_func=lambda n: disp[view.sat_ntc_id == n].iloc[0])
         srow = view[view.sat_ntc_id == pick].iloc[0]
         # focus a station -> highlighted on the map. Driven by THIS selector OR a
         # map click (synced): map click writes the selector's state before it renders.
@@ -429,15 +558,25 @@ def main():
         spectrum_panel(ific, int(pick), dark)
 
     with right:
-        c = STATUS_COLOR.get(srow.review_status, "#718096")
+        c = STATUS_COLOR.get(srow.label, "#718096")
+        ov_mark = " ✎ reviewer override" if srow.overridden else ""
         st.markdown(f"### {srow.sat_name or '?'} "
-                    f"<span style='color:{c}'>({srow.review_status})</span>",
+                    f"<span style='color:{c}'>({srow.label})</span>"
+                    f"<span style='font-size:.7rem;color:#999'>{ov_mark}</span>",
                     unsafe_allow_html=True)
         m1, m2, m3 = st.columns(3)
         m1.metric("Admin", srow.adm or "?")
         m2.metric("Type", "GSO" if srow.is_gso else "non-GSO")
         m3.metric("Worst margin",
                   f"{srow.worst_margin_db:+.1f} dB" if pd.notna(srow.worst_margin_db) else "—")
+        # reviewer relabel (human-in-the-loop)
+        b1, b2, b3 = st.columns(3)
+        if b1.button("✅ Clear", width='stretch', help="Mark reviewed — not a concern"):
+            set_override(ific, int(pick), "CLEARED"); st.rerun()
+        if b2.button("🔴 Flag ALERT", width='stretch'):
+            set_override(ific, int(pick), "ALERT"); st.rerun()
+        if b3.button("↩️ Reset", width='stretch', help="Back to the auto label"):
+            set_override(ific, int(pick), None); st.rerun()
 
         wp = worst_pair(ific, int(pick))
         if wp is not None and wp.status == "scored":
