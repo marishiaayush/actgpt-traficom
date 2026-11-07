@@ -7,6 +7,7 @@ protected Finnish radio stations, and produces a ranked, human-reviewable queue.
 Built for the *Since AI Hackathon 2026 — Traficom* challenge.
 
 > **Full methodology and findings:** see [`analysis/REPORT.md`](analysis/REPORT.md).
+> **Abbreviations:** [`analysis/GLOSSARY.md`](analysis/GLOSSARY.md).
 
 ## What it does — the funnel
 

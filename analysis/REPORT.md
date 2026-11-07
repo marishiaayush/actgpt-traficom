@@ -1,6 +1,7 @@
 # Dataset primer — Traficom "Frequencies of interest" (synthetic)
 
 *Working notes, updated 2026-11-07. Source: `Traficom_SinceAI_Frequencies_of_interest_v05112026.xlsx` (874 records).*
+*Abbreviations: see [`GLOSSARY.md`](GLOSSARY.md).*
 
 ## 1. What this dataset actually is
 
