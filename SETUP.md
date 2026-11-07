@@ -5,19 +5,39 @@ Everything runs locally on a laptop. The **datasets are not in the repo**
 
 ## 1. Prerequisites
 
-- **[uv](https://docs.astral.sh/uv/)** (Python env + runner):
-  `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- **mdbtools** (to read ITU MS-Access `.mdb` on macOS/Linux):
-  macOS `brew install mdbtools` · Debian/Ubuntu `sudo apt-get install mdbtools`
-- Internet (for the ITU downloads, the M4 API, and the dashboard's map tiles).
+### a) uv — the only thing you install by hand (handles Python + deps)
 
-## 2. Clone + environment
+**macOS / Linux** (Terminal):
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+**Windows** (PowerShell):
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+Then restart the terminal and check: `uv --version`. uv installs the right
+Python itself — you don't need Python pre-installed.
+
+### b) mdbtools — only for converting the ITU `.mdb` (one-time step)
+
+| OS | Install |
+|----|---------|
+| **macOS** | `brew install mdbtools` |
+| **Linux** | `sudo apt-get install mdbtools` |
+| **Windows** | mdbtools is Linux/mac only. Easiest: run the **conversion step** (3→4) inside **WSL** (`wsl --install`, then `sudo apt-get install mdbtools` and follow the Linux commands). Everything else — `uv`, the pipeline, the dashboard — runs **natively on Windows**. |
+
+- Internet is needed (ITU downloads, the M4 API, the dashboard's map tiles).
+
+## 2. Clone + environment  (same on macOS / Linux / Windows)
 
 ```bash
 git clone https://github.com/marishiaayush/actgpt-traficom.git
 cd actgpt-traficom
-uv sync                      # creates .venv from pyproject/uv.lock
+uv sync                      # uv fetches Python + all deps into .venv
 ```
+
+All later commands start with `uv run …`, which works identically on every OS
+(no manual venv activation needed).
 
 ## 3. Get the data (one-time)
 

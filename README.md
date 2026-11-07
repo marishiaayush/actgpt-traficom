@@ -8,10 +8,34 @@ protected Finnish radio stations, and produces a ranked, human-reviewable queue.
 
 Built for the *Since AI Hackathon 2026 — Traficom* challenge.
 
-> **🚀 Clone & run in minutes:** [`SETUP.md`](SETUP.md).
 > **New here? Plain-language explainer:** [`analysis/EXPLAIN.md`](analysis/EXPLAIN.md).
 > **Full methodology and findings:** [`analysis/REPORT.md`](analysis/REPORT.md).
 > **Abbreviations:** [`analysis/GLOSSARY.md`](analysis/GLOSSARY.md).
+
+## Quickstart (macOS · Linux · Windows)
+
+**1. Install `uv`** (it brings its own Python — nothing else to install):
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**2. Clone, sync, run:**
+```bash
+git clone https://github.com/marishiaayush/actgpt-traficom.git && cd actgpt-traficom
+uv sync                                     # uv fetches Python + all deps
+uv run python analysis/pipeline.py 3074     # build app.db (needs the IFIC .mdb)
+uv run streamlit run dashboard.py           # open http://localhost:8501
+```
+
+Every command is `uv run …` and works the same on all three OSes.
+**Full step-by-step + the one-time data download (and the Windows `mdbtools`
+note): [`SETUP.md`](SETUP.md).**
 
 ## What it does — the funnel
 

@@ -179,10 +179,10 @@ def map_panel(ific, ntc, is_gso, dark, focused, key):
     for z, col in [("land", "#e53e3e"), ("maritime", "#dd6b20")]:
         s = aff[aff.zone == z] if len(aff) else aff
         if len(s):
-            sized = [16 if int(n) == clicked else 12 for n in s.station_no]
+            sized = [20 if int(n) == clicked else 14 for n in s.station_no]
             fig.add_trace(go.Scattermap(lon=s.lon, lat=s.lat, mode="markers",
                 marker=dict(size=sized, color=col), name=f"affected · {z} ({len(s)})",
-                customdata=[int(n) for n in s.station_no],
+                customdata=[[int(n)] for n in s.station_no],   # 2D: reliable selection
                 text=[f"stn {int(r.station_no)} · {z}<br>{r.overlap_freq_mhz:.1f} MHz · "
                       f"margin {r.margin:+.1f} dB<br>class {r.role}" for r in s.itertuples()],
                 hoverinfo="text"))
@@ -198,8 +198,8 @@ def map_panel(ific, ntc, is_gso, dark, focused, key):
     ctr, zoom = dict(lat=64.5, lon=26.0), 3.4
     if clicked is not None and len(aff):
         fr = aff[aff.station_no == clicked]
-        if len(fr):
-            ctr, zoom = dict(lat=float(fr.lat.iloc[0]), lon=float(fr.lon.iloc[0])), 6.0
+        if len(fr):   # gentle recenter (keep context; avoids the jarring deep zoom)
+            ctr, zoom = dict(lat=float(fr.lat.iloc[0]), lon=float(fr.lon.iloc[0])), 4.6
     fig.update_layout(
         map=dict(style=style, center=ctr, zoom=zoom),
         height=600, margin=dict(l=0, r=0, t=0, b=0),
@@ -656,6 +656,23 @@ def render_triage(ific, row, dark):
             st.markdown(html_table(chain), unsafe_allow_html=True)
             st.caption(f"power source: {wp.pfd_source} · proximity: {wp.proximity}"
                        + (f" · FDR −{wp.fdr_db:.0f} dB" if wp.proximity == 'adjacent' else ""))
+            with st.expander("ⓘ Formulas — how each value is calculated"):
+                st.markdown(
+                    "- **Interference frequency** — midpoint of the overlap "
+                    "(satellite emission band ∩ victim RX channel).\n"
+                    "- **Arrival elevation** — angle above the station's horizon "
+                    "(GSO: station lat/lon vs slot longitude; non-GSO: worst-case "
+                    "elevation of the SGP4 pass).\n"
+                    "- **Slant range** &nbsp; `d = √((R·sin e)² + h(2R+h)) − R·sin e`"
+                    " &nbsp; (R = 6371 km, h = orbit altitude, e = elevation).\n"
+                    "- **PFD at surface** &nbsp; `PFD = EIRP_eff − 20·log₁₀(d_m) "
+                    "− 10·log₁₀(4π)` &nbsp;[− FDR for adjacent band]. "
+                    "EIRP_eff = pwr_max + antenna gain, scaled to the Article-21 "
+                    "reference bandwidth.\n"
+                    "- **Article-21 limit** — RR Art.21 Table 21-4 per band: "
+                    "L0 for δ ≤ 5°; L0 + slope·(δ−5) for 5–25°; capped for δ ≥ 25°.\n"
+                    "- **Margin** &nbsp; `margin = PFD − limit` &nbsp; (> 0 ⇒ exceeds "
+                    "the limit → screening alert, **not** confirmed interference).")
 
         # affected part of Finland (land + maritime)
         reg, aff = affected_area(ific, int(pick), bool(srow.is_gso))
