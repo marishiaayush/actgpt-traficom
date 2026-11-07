@@ -4,6 +4,13 @@ Questions for the Traficom / spectrum experts to check we're going in the right
 direction. Each maps to a concrete assumption in our pipeline (see
 [`REPORT.md`](REPORT.md)). Ask the top 3 first; the rest are backup.
 
+> **Round-1 expert feedback incorporated** (see REPORT.md): Stage 1 now uses the
+> victim's **RX** band (not TX) and tags broadcast as transmitters; non-GSO
+> geometry uses the correct max ground-track latitude (prograde/retrograde) and
+> is framed as *potential* visibility; results are called **screening alerts**
+> (not validated exceedances); `pwr_max`-as-power and Article-21 applicability
+> are flagged as assumptions to confirm (Q1, Q3 below).
+
 **Opening line:**
 > "We built an auditable funnel — frequency overlap → orbital geometry → PFD vs
 > Article 21 — that turns an IFIC into a ranked review queue, and I want to

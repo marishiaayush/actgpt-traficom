@@ -32,7 +32,7 @@ import matplotlib.pyplot as plt
 ROOT = Path(__file__).resolve().parent.parent
 SRS = ROOT / "analysis" / "srs3074.db"
 FIN = ROOT / "analysis" / "frequencies.db"
-OUT = ROOT / "analysis" / "plots" / "footprint_3d.html"
+OUT = ROOT / "analysis" / "plots" / "footprint_3d_v2.html"
 
 R_E = 6371.0
 GSO_ALT = 35786.0
@@ -101,7 +101,7 @@ def render_static(foots, stn_xyz, lim=1.35):
     ax.view_init(elev=38, azim=60)
     ax.set_title("Flagged-satellite footprints over Finland\n"
                  "gold = GSO (far, wide cones)   red = non-GSO (tight over FIN)")
-    fig.savefig(OUT.with_name("footprint_3d.png"), dpi=130, bbox_inches="tight")
+    fig.savefig(OUT.with_name("footprint_3d_v2.png"), dpi=130, bbox_inches="tight")
     plt.close(fig)
 
 

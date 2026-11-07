@@ -128,6 +128,15 @@ def matched_eirp_eff(emis_rows, freq_mhz, ref_bw_hz):
     just eirp_eff - 20log10(d_m) - 10.99.
         EIRP_total = pwr_max + gain            (peak gain = main beam on station)
         eirp_eff   = EIRP_total - 10log10(max(B/ref, 1))
+
+    ASSUMPTION TO CONFIRM (expert flag): this treats grp.pwr_max as TRANSMITTER
+    power (dBW) in the emission bandwidth, so adding s_beam.gain yields EIRP. If
+    pwr_max were already an EIRP or a power DENSITY, this double-counts gain or
+    mis-scales bandwidth. Data leans toward "power" (median pwr_max 20.5 dBW +
+    gain 30 dBi -> ~50 dBW EIRP, plausible; a separate pwr_max_1m density field
+    exists), but verify against the SRS Preface / GIBC. Also: the Article-21
+    Table 21-4 limit is NOT universal -- its applicability depends on the
+    service and provision of each notice, which we do not yet check.
     """
     if emis_rows is None:
         return None
@@ -163,10 +172,15 @@ def score_pair(nrow, srow, freq_mhz, cpfd_rows, emis_rows, fdr=0.0):
                     "pfd": np.nan, "limit": np.nan, "margin": np.nan,
                     "pfd_source": None, "alt_km": np.nan}
         incl = nrow["incl"] if pd.notna(nrow["incl"]) else 90.0
-        if abs(lat) <= incl:
-            elevs = ELEV_SWEEP                      # can pass overhead
+        # max ground-track latitude = inclination (prograde) or 180-incl
+        # (retrograde, e.g. sun-synchronous ~98deg reaches ~82N). This is
+        # POTENTIAL visibility only -- not proof the beam illuminates the
+        # station, nor for how long. A screening approximation.
+        max_track_lat = incl if incl <= 90 else 180 - incl
+        if abs(lat) <= max_track_lat:
+            elevs = ELEV_SWEEP                      # sub-track can pass overhead
         else:
-            el_max = elevation_from_central_angle(abs(lat) - incl, alt)
+            el_max = elevation_from_central_angle(abs(lat) - max_track_lat, alt)
             elevs = ELEV_SWEEP[ELEV_SWEEP <= max(el_max, 5)]
             if len(elevs) == 0:
                 elevs = np.array([max(el_max, 1.0)])
@@ -245,12 +259,14 @@ def main():
           f"(source: {sc['pfd_source'].value_counts().to_dict()})")
     print(f"   proximity: {sc['proximity'].value_counts().to_dict()}")
     exceed = sc[sc.margin > 0]
-    print(f"   exceeding Article-21 limit (margin>0): {len(exceed)} pairs, "
-          f"{exceed.sat_ntc_id.nunique()} notices, {exceed.station_no.nunique()} stations")
-    print(f"     of which co-channel: {(exceed.proximity=='co').sum()}, "
-          f"adjacent-band: {(exceed.proximity=='adjacent').sum()}")
-    print("   NOTE: 'computed' = worst-case (main beam on station); conservative upper bound")
-    print("\nTOP 10 PFD exceedances (worst margin):")
+    print(f"   SCREENING ALERTS (margin>0 under stated assumptions): {len(exceed)} "
+          f"pairs, {exceed.sat_ntc_id.nunique()} notices, {exceed.station_no.nunique()} stations")
+    print(f"     co-channel: {(exceed.proximity=='co').sum()}, "
+          f"adjacent-band (exploratory): {(exceed.proximity=='adjacent').sum()}")
+    print("   NOTE: alerts are NOT confirmed interference. 'computed' assumes main-beam-")
+    print("   on-station with an UNCONFIRMED Art-21 applicability + pwr_max definition;")
+    print("   margin<0 = below the screening threshold under these assumptions, not proven safe.")
+    print("\nTOP 10 SCREENING ALERTS (worst margin):")
     cols = ["sat_ntc_id","adm","station_no","overlap_freq_mhz","proximity",
             "offset_mhz","fdr_db","is_gso","margin","pfd_source"]
     show = sc[cols].head(10).copy()
@@ -282,7 +298,7 @@ def make_plots(df):
         if len(d):
             ax[0].hist(d, bins=45, alpha=0.6, color=color, label=f"{prox} ({len(d)})")
     ax[0].axvline(0, color="k", ls="--", lw=1)
-    ax[0].set_title("Worst-case PFD margin (margin>0 = exceeds Article-21 limit)\n"
+    ax[0].set_title("Worst-case PFD margin (margin>0 = screening alert, not confirmed)\n"
                     "co-channel vs adjacent-band (after FDR)")
     ax[0].set_xlabel("margin (dB)  [PFD - limit]"); ax[0].set_ylabel("pairs")
     ax[0].legend()
@@ -296,11 +312,11 @@ def make_plots(df):
     ax[1].set_yticklabels([f"{int(n)} ({a})" for n, a in
                            zip(worst.sat_ntc_id, worst.adm)], fontsize=7)
     ax[1].invert_yaxis(); ax[1].axvline(0, color="k", ls="--", lw=1)
-    ax[1].set_title("Worst-case PFD margin per notice, top 20\nblue=GSO, red=non-GSO")
+    ax[1].set_title("Worst-case PFD screening margin per notice, top 20\nblue=GSO, red=non-GSO")
     ax[1].set_xlabel("margin (dB)")
-    fig.tight_layout(); fig.savefig(PLOTS / "pfd_triage.png", dpi=130)
+    fig.tight_layout(); fig.savefig(PLOTS / "pfd_triage_v2.png", dpi=130)
     plt.close(fig)
-    print(f"\nPlot -> {PLOTS}/pfd_triage.png")
+    print(f"\nPlot -> {PLOTS}/pfd_triage_v2.png")
     print(f"Table -> srs3074.db :: fin_pfd_score (ranked)")
 
 

@@ -48,16 +48,25 @@ def band_label(mhz):
 
 
 def load_bands():
-    # Finnish protected station channels: [tx - bw/2, tx + bw/2] in MHz.
+    # Receive-side protection: the protected band is the victim's RECEIVE
+    # channel [rx - bw/2, rx + bw/2]. For fixed links TX != RX, so using RX is
+    # essential. Broadcast (BC/BT) are TRANSMITTERS (TX==RX in the synthetic
+    # data) -> tagged station_role='broadcast_tx', not genuine receivers; their
+    # interference model (protecting coverage-area receivers) is different.
     fcon = sqlite3.connect(FIN)
     p = pd.read_sql("""
-        SELECT station_no, licence_class, tx_freq_mhz, channel_bw_mhz, band
+        SELECT station_no, licence_class, tx_freq_mhz, rx_freq_mhz,
+               channel_bw_mhz, band
         FROM v_clean WHERE tx_freq_mhz IS NOT NULL
     """, fcon)
     fcon.close()
+    # victim frequency = RX where present, else fall back to TX
+    p["victim_freq_mhz"] = p["rx_freq_mhz"].fillna(p["tx_freq_mhz"])
+    p["station_role"] = np.where(
+        p["licence_class"].isin(["BC", "BT"]), "broadcast_tx", "rx")
     bw = p["channel_bw_mhz"].fillna(0.0) / 2.0
-    p["lo"] = p["tx_freq_mhz"] - bw
-    p["hi"] = p["tx_freq_mhz"] + bw
+    p["lo"] = p["victim_freq_mhz"] - bw
+    p["hi"] = p["victim_freq_mhz"] + bw
 
     # Satellite emission bands (downlink). Dedupe to distinct notice/band.
     scon = sqlite3.connect(SRS)
@@ -91,17 +100,18 @@ def compute_overlap(p, s):
             st = p.iloc[i]
             mid = (max(b.lo, st.lo) + min(b.hi, st.hi)) / 2.0
             rows.append((b.ntc_id, b.adm, b.lo, b.hi, st.station_no,
-                         st.licence_class, st.tx_freq_mhz, "co", 0.0,
-                         float(mid), st.band))
+                         st.licence_class, st.station_role, st.victim_freq_mhz,
+                         "co", 0.0, float(mid), st.band))
         for i in np.where(near)[0]:
             st = p.iloc[i]
             gap = max(b.lo - st.hi, st.lo - b.hi, 0.0)  # positive separation
             rows.append((b.ntc_id, b.adm, b.lo, b.hi, st.station_no,
-                         st.licence_class, st.tx_freq_mhz, "adjacent",
-                         float(gap), float(st.tx_freq_mhz), st.band))
+                         st.licence_class, st.station_role, st.victim_freq_mhz,
+                         "adjacent", float(gap), float(st.victim_freq_mhz),
+                         st.band))
     cols = ["sat_ntc_id", "adm", "sat_lo_mhz", "sat_hi_mhz", "station_no",
-            "licence_class", "station_freq_mhz", "proximity", "offset_mhz",
-            "interf_freq_mhz", "band"]
+            "licence_class", "station_role", "victim_freq_mhz", "proximity",
+            "offset_mhz", "interf_freq_mhz", "band"]
     return pd.DataFrame(rows, columns=cols)
 
 
@@ -154,7 +164,7 @@ def make_overlap_plots(p, s, ov):
                  "frequency-overlap candidates)")
     ax.legend(loc="upper right")
     fig.tight_layout()
-    fig.savefig(PLOTS / "spectrum_overlap.png", dpi=130)
+    fig.savefig(PLOTS / "spectrum_overlap_v2.png", dpi=130)
     plt.close(fig)
 
     # ---- who threatens Finnish bands: notices by administration ----
@@ -167,9 +177,9 @@ def make_overlap_plots(p, s, ov):
     ax.set_xlabel("# satellite notices overlapping Finnish protected bands")
     ax.set_title("Frequency-overlap candidates by filing administration (3074)")
     fig.tight_layout()
-    fig.savefig(PLOTS / "overlap_by_admin.png", dpi=130)
+    fig.savefig(PLOTS / "overlap_by_admin_v2.png", dpi=130)
     plt.close(fig)
-    print(f"\nPlots -> {PLOTS}/spectrum_overlap.png, overlap_by_admin.png")
+    print(f"\nPlots -> {PLOTS}/spectrum_overlap_v2.png, overlap_by_admin_v2.png")
 
 
 if __name__ == "__main__":

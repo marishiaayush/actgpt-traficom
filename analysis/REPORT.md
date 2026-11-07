@@ -99,9 +99,11 @@ A satellite does not have to *target* Finland to interfere with it. Filtering
 IFIC notices on `service_area = FIN` is wrong, confirmed by IFIC 3074:
 
 - **57% of the notices (112 / 196) are non-GSO constellations** at ~600 km with
-  high inclination (thousands of orbital planes at 55-99 deg). A LEO
-  constellation at inclination >= ~60 deg **overflies Finland (60-70 N) by
-  construction** and transmits continuously, whatever service area was declared.
+  high inclination (thousands of orbital planes at 55-99 deg). A ground track
+  reaches latitude = inclination (or 180-inclination if retrograde), so a
+  constellation whose inclination covers ~62-70N **can pass over Finland**
+  regardless of the declared service area -- *potential* reach, not proof the
+  beam illuminates a given station (which needs orbital/beam detail we lack).
 - Service areas are barely country-level anyway: only 47 distinct area codes in
   the whole file, **`FIN` appears in just 2 group records**, and the dominant
   code is `XAA` (310) - a broad ITU zone, not a country - plus neighbours
@@ -197,26 +199,45 @@ notice (196)            who filed it: ntc_id, adm (administration), provision
 ```
 
 ### Stage 1 - frequency overlap  (script: freq_overlap.py)
-Interval-intersect each satellite EMISSION band (`grp` where `emi_rcp='E'`, the
-downlinks that raise power at Finnish *receivers*) against every Finnish
-protected channel (`v_clean`, [tx - bw/2, tx + bw/2]). Necessary, cheap gate.
-Result: **196 -> 130 notices**, 8,721 (notice x station) overlap pairs, written
-to `srs3074.db :: fin_freq_overlap`.
+Receive-side protection: interval-intersect each satellite EMISSION band (`grp`
+where `emi_rcp='E'`, the downlinks that raise power at Finnish *receivers*)
+against each victim's **RECEIVE** channel `[rx - bw/2, rx + bw/2]` (`v_clean`).
+Using RX (not TX) matters because fixed links are frequency-division duplex:
+all 320 FX + ~250 others have TX != RX. **Broadcast stations (BC/BT) are
+transmitters** (TX==RX in the synthetic data) -> tagged `station_role =
+broadcast_tx`, NOT treated as genuine receivers; their interference model
+(protecting coverage-area receivers) is different and out of scope here.
+Result: **196 -> 150 notices**, ~8.9k co-channel pairs, written to
+`srs3074.db :: fin_freq_overlap` (with `station_role`, `victim_freq_mhz`).
 
 ### Stage 2 - geometry  (pfd.py)
-Does the satellite actually illuminate that station, and at what elevation?
-- **non-GSO**: reaches overhead (up to 90 deg) if station |lat| <= orbit
-  inclination; else best elevation at its peak latitude. Elevations are swept.
+Does the satellite *potentially* become visible from that station, and at what
+elevation? (This is POTENTIAL visibility only -- it does NOT establish that the
+beam illuminates the station, nor when/for how long. Screening approximation.)
+- **non-GSO**: the ground track reaches latitude = inclination (prograde) or
+  180-inclination (retrograde, e.g. sun-synchronous ~98deg reaches ~82N). If
+  station |lat| <= that, the sub-track can pass overhead; else the best
+  elevation at its peak latitude. Elevations are swept.
 - **GSO**: fixed elevation from station lat/lon vs the slot longitude
   (`geo.long_nom`); below the horizon -> `not_visible_gso` (dropped).
 Slant range: `d = sqrt((R*sin e)^2 + h(2R+h)) - R*sin e`.
 
 ### Stage 3 - PFD vs Article-21 limit  (pfd_score.py, article21.py)
 PFD link budget:  `PFD = EIRP_eff - 20*log10(d_m) - 10.99  [dBW/m2]`
-compared to the **per-band** RR Article 21 Table 21-4 limit, which is strictest
-at low elevation (Finland's regime) and carries a band-specific reference
-bandwidth (4 kHz below ~15 GHz, 1 MHz above). Worst margin over swept
-elevations; `margin = PFD - limit > 0` -> exceedance.
+compared to the **per-band** RR Article 21 Table 21-4 limit, strictest at low
+elevation (Finland's regime), in a band-specific reference bandwidth (4 kHz
+below ~15 GHz, 1 MHz above). Worst margin over swept elevations;
+`margin = PFD - limit > 0` -> a **screening alert** (not a confirmed exceedance).
+
+**Caveats (expert-flagged):**
+- **Article 21 Table 21-4 is NOT a universal criterion.** Its applicability
+  depends on the service and provision of each notice (and non-GSO is often
+  governed by **epfd / Article 22** when protecting GSO networks -- though here
+  the victims are *terrestrial*, so Art-21 PFD is the candidate criterion). We do
+  not yet check service/provision applicability. (Expert question #1.)
+- **`pwr_max` definition unconfirmed.** We treat `grp.pwr_max` as transmitter
+  power so `pwr_max + gain` = EIRP; if it were already EIRP or a power density,
+  gain is double-counted / bandwidth mis-scaled. Verify vs SRS Preface / GIBC.
 
 Power source is TIERED with provenance (`pfd_source`):
 1. **declared** - `c_pfd.pfd`, band-matched to the overlap frequency and
@@ -232,14 +253,15 @@ overlapping), and Stage 3 subtracts a **frequency-dependent rejection** from the
 interfering PFD:  `PFD_effective = PFD - FDR(offset)`  (adjacent.py). FDR grows
 with the frequency gap (simplified ITU-R SM.1541-style mask), so a close strong
 neighbour still flags while a distant one self-attenuates out of the queue.
-- Pairs: 8,721 co-channel + ~31k adjacent (most heavily rejected by FDR).
-- Result on 3074: **179 adjacent-band exceedances**, but they fall on the SAME
-  22 notices / 41 stations already flagged co-channel (0 new actors) -> adjacent
-  analysis *reinforces* the co-channel candidates here rather than expanding
-  them. The capability still matters (the brief asks for it; another IFIC could
-  surface new actors) and strengthens the evidence on flagged candidates.
-- Limitation: victim receiver selectivity (ACS) is not in the Finnish dataset,
-  so FDR models the transmitter side with a conservative spurious floor.
+- Pairs: ~8.9k co-channel + ~31k adjacent (most heavily rejected by FDR).
+- Result on 3074: **~165 adjacent-band SCREENING ALERTS** (not validated
+  exceedances), falling on notices already flagged co-channel -> adjacent
+  analysis *reinforces* the co-channel candidates rather than expanding them.
+- **These are exploratory.** SM.1541 covers unwanted *out-of-band emissions*
+  only; it is not a complete receiver-specific interference model, and victim
+  receiver selectivity (ACS) is absent from the Finnish dataset. So FDR models
+  the transmitter side with a conservative spurious floor -- call the results
+  **adjacent-band screening alerts**, not validated exceedances.
 
 ### Two findings that shape the result (and are themselves deliverables)
 1. **Declared PFD doesn't cover the Finnish-overlap frequencies.** 3074's
@@ -250,9 +272,12 @@ neighbour still flags while a distant one self-attenuates out of the queue.
    contaminated and produced spurious exceedances; band-matching fixed it.)
 2. **Beam pointing is absent -> we screen with a worst-case.** `bore_lat/long`
    are NULL, so we cannot compute the off-axis angle to Finland. We therefore
-   assume the main beam points at the station. Consequence:
-   `margin < 0` = **provably safe even worst-case**;
-   `margin > 0` = **not provably safe -> review** (not "confirmed harmful").
+   assume the main beam points at the station. Interpret carefully (not a
+   rigorous bound -- beam characteristics, aggregate emissions and the power
+   definition are not all established):
+   `margin < 0` = **below the screening threshold under the stated conservative
+   assumptions** (NOT proven safe);
+   `margin > 0` = a **screening alert for review** (NOT proof of interference).
 
 ### The four angles (do not conflate them)
 | angle | what | in data? | role |
@@ -263,18 +288,24 @@ neighbour still flags while a distant one self-attenuates out of the queue.
 | beam boresight | where the satellite antenna points | NULL | sat gain toward Finland (off-axis) |
 
 The missing one is **beam boresight**. For steerable non-GSO beams that is
-expected - such systems are defined by a **PFD mask** (ITU epfd / Article 22),
-not a fixed pointing, and our worst-case assumption approximates that mask peak.
+expected - such systems are characterized by a **PFD mask** rather than a fixed
+pointing, and our worst-case assumption approximates that mask peak. (Note:
+**Article 22 epfd** is a *distinct* examination for non-GSO systems protecting
+**GSO networks** - a different victim class than our *terrestrial* stations - so
+it is not directly the criterion here; see expert question #1.)
 
 ### Current output (triage queue), table `srs3074.db :: fin_pfd_score`
-- **22 notices / 41 stations** with worst-case PFD exceedances -> FLAG for review
-  (led by CHN 125520111 +35 dB, INS 124520197 +27 dB, Indian GSO filings).
-- **48 notices** reach Finland but carry no usable power -> needs-data queue
+*(Receive-band / RX fix + geometry fix applied; plots suffixed `_v2`.)*
+- **~25 notices / ~40 stations** raise **screening alerts** (worst-case PFD >
+  limit under the stated assumptions) -> review. NOT confirmed interference.
+- Many notices reach Finland but carry no usable power -> needs-data queue
   (e.g. a 160 km USA LEO nearly overhead).
-- **454 pairs** at frequencies with no Table 21-4 band -> need another criterion.
+- Pairs at frequencies with no Table 21-4 band -> need another criterion.
 
-"No concern" is NOT the state: there is a concrete flagged set; the worst-case
-screen deliberately over-includes until off-axis / epfd refinement narrows it.
+"No concern" is NOT the state, but neither is "confirmed interference": there is
+a concrete set of screening alerts that the worst-case screen deliberately
+over-includes, pending off-axis / epfd refinement and the expert validation in
+[`QUESTIONS.md`](QUESTIONS.md).
 
 ### Known limitations / next refinements
 - Table 21-4 values are the long-standing ones; verify vs current RR, finer band
