@@ -12,4 +12,5 @@ dependencies = [
     "plotly>=7.1.0",
     "sgp4>=2.27",
     "skyfield>=1.55",
+    "streamlit>=1.67.0",
 ]

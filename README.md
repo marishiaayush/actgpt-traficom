@@ -54,6 +54,9 @@ uv run python analysis/pipeline.py 3074   # mdb->sqlite -> overlap -> SGP4 ->
 # explainers
 uv run python analysis/map_interactive.py # protected-station map
 uv run python analysis/pfd_explainer.py   # interactive PFD vs elevation
+
+# 4. the dashboard (reads app.db from step 3)
+uv run streamlit run dashboard.py         # two-panel triage UI in the browser
 ```
 
 ## Code map (`analysis/`)
