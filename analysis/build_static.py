@@ -99,15 +99,32 @@ def build_payload():
                 h = m4[(m4.lo <= f) & (f <= m4.hi)]
                 return h.s.iloc[0] if len(h) else "(no M4)"
             d["bands"] = [[b.f, b.proximity, svc(b.f)] for b in bands.itertuples()]
+            # bandwidth/spectrum: satellite emission bands vs Finnish RX channels
+            spec = pd.read_sql("""SELECT DISTINCT o.sat_lo_mhz lo, o.sat_hi_mhz hi,
+                                         o.victim_freq_mhz vf, s.channel_bw_mhz bw
+                                  FROM fin_freq_overlap o JOIN protected_stations s
+                                    ON s.station_no=o.station_no
+                                  WHERE o.ific_no=? AND o.sat_ntc_id=? LIMIT 80""",
+                               app, params=(int(pub.ific_no), ntc))
+            d["spectrum"] = dict(
+                sat=[[round(b.lo, 2), round(b.hi, 2)]
+                     for b in spec[["lo", "hi"]].drop_duplicates().itertuples()],
+                rx=[[round(x.vf - (x.bw or 0.05)/2, 3), round(x.vf + (x.bw or 0.05)/2, 3)]
+                    for x in spec.itertuples()])
+            # over-limit region (per-cell PFD margin), using EIRP backed out of wp
+            import math as _m
+            eirp_eff = wp.pfd + 20*_m.log10(wp.slant_km*1000) + 10*_m.log10(4*_m.pi)
             if r.is_gso:
                 slot = pd.read_sql("SELECT MIN(long_nom) l FROM geo WHERE ntc_id=?",
                                    srs, params=(ntc,)).l.iloc[0]
-                reg = geo.affected_region(True, slot_lon=slot)
+                reg = geo.over_limit_region(True, eirp_eff, wp.f, slot_lon=slot)
                 d["orbit"] = None
             else:
-                alt = pd.read_sql("SELECT alt_km a FROM fin_geom_sgp4 WHERE ific_no=? AND sat_ntc_id=?",
-                                  app, params=(int(pub.ific_no), ntc))
-                reg = geo.affected_region(False, alt_km=float(alt.a.iloc[0]) if len(alt) else 600)
+                gi = pd.read_sql("SELECT alt_km a, incl i FROM fin_geom_sgp4 WHERE ific_no=? AND sat_ntc_id=?",
+                                 app, params=(int(pub.ific_no), ntc))
+                reg = geo.over_limit_region(False, eirp_eff, wp.f,
+                        alt_km=float(gi.a.iloc[0]) if len(gi) else 600,
+                        incl=float(gi.i.iloc[0]) if len(gi) else 90)
                 d["orbit"] = orbit_track(srs, ntc)
             nmar = sum(1 for x in d["affected"] if x[3] == "maritime")
             d["area"] = dict(pct=reg["pct_territory"], maritime=reg["includes_maritime"],
@@ -171,6 +188,7 @@ border-radius:8px;padding:5px 10px;font-size:.8rem}.filter{display:flex;gap:6px;
 <button class="toggle" onclick="toggleDark()">🌙 Dark</button></header>
 <div class="wrap">
   <div><div class="card"><div id="map"></div></div>
+    <div class="card"><div class="muted" style="margin-bottom:6px">Interfering bandwidth — satellite emission (blue) vs Finnish RX channel (green)</div><div id="spectrum"></div></div>
     <div class="card"><b>Finnish interference triage</b> — precomputed static demo.
     <span class="muted">Live interactive version runs locally via Streamlit; this read-only
     snapshot is generated from the same backend.</span></div></div>
@@ -206,11 +224,22 @@ tbl(["step","value"],[["interference freq",c.freq+" MHz"],["elevation",c.elev+"�
 ["PFD (computed)",c.pfd+" dBW/m²"],["Article-21 limit",c.limit+" dBW/m²"],["margin",(c.margin>0?'+':'')+c.margin+" dB"]])+
 `<div class="muted">source: ${c.src} · proximity: ${c.prox}</div>`;}
 if(s.area){const a=s.area;h+=`<p><b>Affected part of Finland</b></p><div class="metrics">
-<div class="metric"><div class="muted">Territory in footprint</div><div class="v">${a.pct}%</div></div>
+<div class="metric"><div class="muted">Territory over limit</div><div class="v">${a.pct}%</div></div>
 <div class="metric"><div class="muted">Maritime (EEZ)</div><div class="v">${a.maritime?'yes':'no'}</div><div class="muted">${a.maritime?a.pct_sea+'% of sea':''}</div></div>
 <div class="metric"><div class="muted">Affected stations</div><div class="v">${a.n}</div><div class="muted">${a.n_mar?a.n_mar+' maritime':'all land'}</div></div></div>`;}
 if(s.bands&&s.bands.length){h+=`<p><b>Affected Finnish bands</b></p>`+tbl(["freq (MHz)","prox","Finnish use (M4)"],s.bands.map(b=>[b[0],b[1],b[2]]));}
-el("detail").innerHTML=h;renderList();drawMap(s);}
+el("detail").innerHTML=h;renderList();drawMap(s);drawSpectrum(s);}
+function seg(pairs){const x=[];pairs.forEach(p=>x.push(p[0],p[1],null));return x;}
+function drawSpectrum(s){if(!s.spectrum){Plotly.purge("spectrum");return;}
+const lab=dark?"#e2e8f0":"#1a202c";
+const t=[{x:seg(s.spectrum.sat),y:s.spectrum.sat.flatMap(()=>[1,1,null]),mode:"lines",
+line:{width:12,color:"#2b6cb0"},name:"satellite emission"},
+{x:seg(s.spectrum.rx),y:s.spectrum.rx.flatMap(()=>[0,0,null]),mode:"lines",
+line:{width:12,color:"#2f855a"},name:"Finnish RX channel"}];
+Plotly.newPlot("spectrum",t,{height:150,margin:{l:60,r:10,t:6,b:34},
+paper_bgcolor:"rgba(0,0,0,0)",plot_bgcolor:"rgba(0,0,0,0)",font:{color:lab},
+yaxis:{tickvals:[0,1],ticktext:["FIN RX","sat TX"],range:[-0.6,1.6]},
+xaxis:{title:"frequency (MHz)"},legend:{orientation:"h",y:1.4,font:{size:11}}},{displayModeBar:false});}
 function drawMap(s){const style=dark?"carto-darkmatter":"carto-positron";const t=[];
 t.push({type:"scattermap",lon:D.stations.map(p=>p[0]),lat:D.stations.map(p=>p[1]),mode:"markers",
 marker:{size:4,color:"#9aa5b1"},name:"protected",hoverinfo:"skip"});
@@ -225,7 +254,7 @@ text:a.map(p=>"stn "+p[0]+"  "+p[2]+" dB"),hoverinfo:"text"});});}
 Plotly.newPlot("map",t,{map:{style:style,center:{lat:64.5,lon:26},zoom:3.3},
 margin:{l:0,r:0,t:0,b:0},paper_bgcolor:"rgba(0,0,0,0)",font:{color:dark?"#e2e8f0":"#1a202c"},
 legend:{orientation:"h",y:-0.02}},{scrollZoom:true,displayModeBar:false});}
-function toggleDark(){dark=!dark;document.body.classList.toggle("dark");if(sel)drawMap(D.satellites[sel]);}
+function toggleDark(){dark=!dark;document.body.classList.toggle("dark");if(sel){drawMap(D.satellites[sel]);drawSpectrum(D.satellites[sel]);}}
 renderList();
 </script></body></html>"""
 

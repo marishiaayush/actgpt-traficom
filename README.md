@@ -24,6 +24,28 @@ Key design principle: **auditable triage**, not a black box. Every flag records
 why it was kept (frequency, geometry, power source, margin). The human stays in
 the loop.
 
+## The app (what you demo)
+
+A local **Streamlit dashboard** (`dashboard.py`) reads the consolidated `app.db`
+and presents a two-panel review tool:
+
+- **Pick an IFIC** (or ⬇️ download + process a new one straight from ITU).
+- **Ranked shortlist** with colour-coded status (🔴 ALERT / 🟡 visible / ⚪ not
+  visible / 🟣 needs data).
+- **Per-satellite detail** — the transparent PFD-math chain, the **affected part
+  of Finland** (land + maritime/EEZ, % over the Article-21 limit), affected
+  bands vs M4, and affected protected stations.
+- **Map** — zoomable, protected + affected stations (hover for detail), maritime
+  (EEZ) border, over-limit area, and the SGP4 orbit ground track; a **bandwidth
+  strip** shows the satellite emission vs the Finnish RX channel.
+- **🧭 Bring your own receiver(s)** — score any lat/lon + RX band (land or
+  maritime, one or many) against the IFIC.
+- **🔄 ITU watch** — "Check now" for new IFIC publications, with last-checked
+  provenance. **🌙 Dark mode** throughout.
+
+A **read-only static version** (`analysis/build_static.py` → `docs/`) mirrors the
+triage for free, shareable hosting (GitHub Pages / Netlify Drop).
+
 ## Data is NOT in this repo
 
 All datasets (ITU IFIC `.mdb`, the synthetic XLSX, the M4 API JSON, derived
@@ -57,7 +79,17 @@ uv run python analysis/pfd_explainer.py   # interactive PFD vs elevation
 
 # 4. the dashboard (reads app.db from step 3)
 uv run streamlit run dashboard.py         # two-panel triage UI in the browser
+
+# 5. (optional) static export for sharing
+uv run python analysis/build_static.py    # -> docs/index.html (read-only)
 ```
+
+## Deploy / share
+- **Live, full:** `uv run streamlit run dashboard.py` (local) — or **Streamlit
+  Community Cloud** (free) for an online link.
+- **Read-only, free, shareable:** the `docs/` static site → **GitHub Pages**
+  (public repo: Settings → Pages → `main` / `docs`) or **Netlify Drop** (drag the
+  `docs/` folder — works even for a private repo).
 
 ## Code map (`analysis/`)
 
@@ -72,11 +104,15 @@ uv run streamlit run dashboard.py         # two-panel triage UI in the browser
 | `geometry_sgp4.py` | Stage-2 upgrade: real SGP4 propagation (Skyfield) — time-resolved passes/coverage over Finland |
 | `article21.py` | ITU RR Article 21, Table 21-4 per-band PFD limits |
 | `pfd_score.py` | steps 2–3 — geometry + PFD margin, ranked triage |
+| `adjacent.py` | adjacent-band guard + frequency-dependent rejection (FDR) |
+| `geo.py` | Finland land + maritime (EEZ) boundaries; which part is over the limit |
+| `poller.py` | ITU watch — check for new IFIC, download + convert |
+| `receiver.py` | score a user-supplied receiver (land/maritime) vs the IFIC |
+| `build_static.py` | render `app.db` → static `docs/` site (GitHub Pages / Netlify) |
 | `score_breakdown.py` | audit trace: every number behind a flagged score, verified |
 | `orbit_paths.py` | simulated SGP4 ground tracks of the flagged satellites |
-| `custom_receiver.py` | score interference for any new receiver — fixed, offshore/maritime, or moving (ship) along a track |
-| `adjacent.py` | adjacent-band guard + frequency-dependent rejection (FDR) |
-| `pfd_explainer.py`, `map_interactive.py` | interactive explainer figures |
-| `footprint_3d.py` | 3D visibility-cone footprints of flagged satellites over Finland |
+| `custom_receiver.py` | interference for a fixed/offshore/**moving** (ship) receiver |
+| `pfd_explainer.py`, `map_interactive.py`, `footprint_3d.py` | interactive explainer figures |
 
-Figures live in `analysis/plots/`.
+Top level: **`dashboard.py`** (Streamlit app). Figures live in `analysis/plots/`;
+Finland boundaries in `analysis/data/`.
