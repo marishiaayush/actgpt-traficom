@@ -6,6 +6,7 @@ protected Finnish radio stations, and produces a ranked, human-reviewable queue.
 
 Built for the *Since AI Hackathon 2026 — Traficom* challenge.
 
+> **New here? Start with the plain-language explainer:** [`analysis/EXPLAIN.md`](analysis/EXPLAIN.md).
 > **Full methodology and findings:** see [`analysis/REPORT.md`](analysis/REPORT.md).
 > **Abbreviations:** [`analysis/GLOSSARY.md`](analysis/GLOSSARY.md).
 
@@ -63,6 +64,7 @@ uv run python analysis/pfd_explainer.py   # interactive PFD vs elevation
 | `mdb_to_sqlite.py` | convert ITU IFIC `.mdb` → SQLite (via mdbtools) |
 | `freq_overlap.py` | step 1 — satellite-vs-Finland frequency overlap |
 | `pfd.py` | orbital geometry + PFD link-budget primitives |
+| `geometry_sgp4.py` | Stage-2 upgrade: real SGP4 propagation (Skyfield) — time-resolved passes/coverage over Finland |
 | `article21.py` | ITU RR Article 21, Table 21-4 per-band PFD limits |
 | `pfd_score.py` | steps 2–3 — geometry + PFD margin, ranked triage |
 | `adjacent.py` | adjacent-band guard + frequency-dependent rejection (FDR) |

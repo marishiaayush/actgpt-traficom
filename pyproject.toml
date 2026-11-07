@@ -10,4 +10,6 @@ dependencies = [
     "openpyxl>=3.1.5",
     "pandas>=3.1.1",
     "plotly>=7.1.0",
+    "sgp4>=2.27",
+    "skyfield>=1.55",
 ]
