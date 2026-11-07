@@ -10,6 +10,7 @@ Run:  uv run streamlit run dashboard.py
 
 import math
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -451,6 +452,14 @@ def main():
         st.metric("ALERTs", int(row.n_alerts))
         st.caption(f"last processed: {row.processed_at}")
         st.link_button("📄 Fetch ITU report (.zip)", poller.report_url(ific))
+        import report as _report
+        _xls, _gen = _report.build_report_xlsx(ific)
+        st.download_button(
+            "📊 Generate review report (.xlsx)", _xls,
+            file_name=f"actgpt_IFIC{ific}_{_gen[:19].replace(':', '-')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width='stretch',
+            help="Timestamped summary: analysis + reviewer changes")
         st.divider()
 
         # --- Phase 3: watch ITU for new publications ---
@@ -483,6 +492,29 @@ def main():
                             st.error(f"Failed: {e}")
             else:
                 st.success("Up to date — no new IFIC.")
+
+        st.divider()
+        with st.expander("⚙️ Data sources (country config)"):
+            st.caption("Swap the protected-station list (same column order).")
+            up = st.file_uploader("Protected stations (.xlsx)", type=["xlsx"], key="stn_up")
+            if up is not None and st.button("Rebuild from this list", width='stretch'):
+                with st.spinner("Rebuilding stations + reprocessing all IFICs ..."):
+                    path = ROOT / "analysis" / "uploaded_stations.xlsx"
+                    path.write_bytes(up.getvalue())
+                    r = subprocess.run([sys.executable, str(ROOT/"analysis"/"explore.py"),
+                                        str(path)], capture_output=True, text=True)
+                    if r.returncode != 0:
+                        st.error("explore.py failed:\n" + (r.stderr or "")[-700:])
+                    else:
+                        from pipeline import run_ific
+                        for i in list(pubs.ific_no):
+                            run_ific(int(i))
+                        q.clear()
+                        st.success("Rebuilt — new stations applied to all publications.")
+                        st.rerun()
+            st.caption("**Article-21 limits** are data-driven: edit "
+                       "`analysis/data/article21_table21-4.csv`. "
+                       "M4 allocation / boundary parametrization → roadmap.")
 
     tab_triage, tab_db = st.tabs(["🛰️  Triage", "🗄️  Database"])
     with tab_db:

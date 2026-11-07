@@ -16,8 +16,15 @@ the real table are finer than the consolidated rows below.
 """
 
 # (f_lo_MHz, f_hi_MHz, L0_dBW_m2, slope_dB_per_deg, ref_bw_Hz)
-# L_25to90 is implied = L0 + slope*20.
-TABLE_21_4 = [
+# L_25to90 is implied = L0 + slope*20. The band table is DATA-DRIVEN: it loads
+# from data/article21_table21-4.csv so it can be updated (new RR edition) or
+# swapped per country/criterion without touching code. The list below is the
+# built-in fallback if the CSV is absent.
+import csv
+from pathlib import Path
+
+_CSV = Path(__file__).resolve().parent / "data" / "article21_table21-4.csv"
+_FALLBACK = [
     (1525,   2500,  -154.0, 0.50, 4_000),
     (2500,   2690,  -152.0, 0.75, 4_000),
     (3400,   7750,  -152.0, 0.50, 4_000),
@@ -28,6 +35,22 @@ TABLE_21_4 = [
     (21400, 22000,  -115.0, 0.50, 1_000_000),
     (25250, 27500,  -115.0, 0.50, 1_000_000),
 ]
+
+
+def load_table(path=_CSV):
+    """Load the band table from CSV (fallback to the built-in list)."""
+    if not Path(path).exists():
+        return list(_FALLBACK)
+    out = []
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            out.append((float(r["f_lo_mhz"]), float(r["f_hi_mhz"]),
+                        float(r["l0_dbw_m2"]), float(r["slope_db_per_deg"]),
+                        float(r["ref_bw_hz"])))
+    return out or list(_FALLBACK)
+
+
+TABLE_21_4 = load_table()
 
 E1, E2 = 5.0, 25.0
 
