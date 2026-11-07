@@ -143,9 +143,10 @@ def orbit_track(ific, ntc, is_gso):
 # --------------------------------------------------------------------------
 # visual panel
 # --------------------------------------------------------------------------
-def map_panel(ific, ntc, is_gso, dark):
+def map_panel(ific, ntc, is_gso, dark, clicked, key):
     """Zoomable mapbox view: protected stations, maritime (EEZ) border, the
-    illuminated part of Finland, affected stations (land/maritime), orbit track."""
+    illuminated part of Finland, affected stations (land/maritime), orbit track.
+    Affected markers are clickable (on_select) and the clicked one is enlarged."""
     style = "carto-darkmatter" if dark else "carto-positron"
     allst = q("SELECT station_no, lat, lon, licence_class FROM protected_stations "
               "WHERE lat IS NOT NULL")
@@ -167,12 +168,14 @@ def map_panel(ific, ntc, is_gso, dark):
         marker=dict(size=4, color="#9aa5b1"), name="protected stations",
         text=[f"stn {int(n)} · {c or '?'}" for n, c in zip(allst.station_no, allst.licence_class)],
         hoverinfo="text"))
-    # affected stations, split land vs maritime (rich hover)
+    # affected stations, split land vs maritime (rich hover + clickable)
     for z, col in [("land", "#e53e3e"), ("maritime", "#dd6b20")]:
         s = aff[aff.zone == z] if len(aff) else aff
         if len(s):
+            sized = [16 if int(n) == clicked else 12 for n in s.station_no]
             fig.add_trace(go.Scattermap(lon=s.lon, lat=s.lat, mode="markers",
-                marker=dict(size=12, color=col), name=f"affected · {z} ({len(s)})",
+                marker=dict(size=sized, color=col), name=f"affected · {z} ({len(s)})",
+                customdata=[int(n) for n in s.station_no],
                 text=[f"stn {int(r.station_no)} · {z}<br>{r.overlap_freq_mhz:.1f} MHz · "
                       f"margin {r.margin:+.1f} dB<br>class {r.role}" for r in s.itertuples()],
                 hoverinfo="text"))
@@ -191,7 +194,21 @@ def map_panel(ific, ntc, is_gso, dark):
         legend=dict(orientation="h", y=-0.03, font=dict(size=13, color=lab),
                     bgcolor="rgba(0,0,0,0)"),
         paper_bgcolor="rgba(0,0,0,0)", font=dict(color=lab, size=13))
-    st.plotly_chart(fig, width='stretch', config={"scrollZoom": True})
+    st.plotly_chart(fig, width='stretch', config={"scrollZoom": True},
+                    on_select="rerun", selection_mode="points", key=key)
+
+
+def clicked_from(key):
+    """Extract the station_no clicked on the map (from its selection state)."""
+    sel = st.session_state.get(key)
+    try:
+        pts = sel["selection"]["points"]
+        if pts:
+            cd = pts[0].get("customdata")
+            return int(cd[0] if isinstance(cd, (list, tuple)) else cd)
+    except Exception:
+        pass
+    return None
 
 
 def spectrum_panel(ific, ntc, dark):
@@ -384,8 +401,10 @@ def main():
                             format_func=lambda n: label[view.sat_ntc_id == n].iloc[0])
         srow = view[view.sat_ntc_id == pick].iloc[0]
 
+    mapkey = f"map_{ific}_{pick}"
+    clicked = clicked_from(mapkey)
     with left:
-        map_panel(ific, int(pick), bool(srow.is_gso), dark)
+        map_panel(ific, int(pick), bool(srow.is_gso), dark, clicked, mapkey)
         st.caption("Interfering bandwidth — satellite emission vs Finnish RX channel")
         spectrum_panel(ific, int(pick), dark)
 
@@ -432,12 +451,17 @@ def main():
             scroll=True), unsafe_allow_html=True)
 
         st.markdown(f"**Affected protected stations ({len(aff)})**")
+        if clicked and clicked in set(aff.station_no):
+            st.caption(f"📍 selected on map: station {clicked}")
         if len(aff):
-            st.markdown(html_table(
-                aff[["station_no", "zone", "overlap_freq_mhz", "margin"]]
-                .round({"overlap_freq_mhz": 2, "margin": 1})
-                .rename(columns={"overlap_freq_mhz": "freq (MHz)"}), scroll=True),
-                unsafe_allow_html=True)
+            tdf = (aff[["station_no", "zone", "overlap_freq_mhz", "margin"]]
+                   .round({"overlap_freq_mhz": 2, "margin": 1})
+                   .rename(columns={"overlap_freq_mhz": "freq (MHz)"}))
+            tdf.insert(0, "", ["📍" if int(n) == clicked else "" for n in tdf.station_no])
+            if clicked in set(tdf.station_no):      # clicked row first
+                tdf = pd.concat([tdf[tdf.station_no == clicked],
+                                 tdf[tdf.station_no != clicked]])
+            st.markdown(html_table(tdf, scroll=True), unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
