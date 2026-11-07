@@ -266,6 +266,8 @@ BASE_CSS = """<style>
     text-align: left; white-space: nowrap; }
 .actgpt-tbl th { background: #f1f5f9; }
 .actgpt-scroll { max-height: 220px; overflow: auto; }
+.info-i { cursor: help; color: #3182ce; font-weight: 700; font-size: .85em;
+          margin-left: 4px; }
 </style>"""
 
 DARK_CSS = """<style>
@@ -619,16 +621,40 @@ def render_triage(ific, row, dark):
 
         wp = worst_pair(ific, int(pick))
         if wp is not None and wp.status == "scored":
-            st.markdown("**Transparent PFD math (worst pair)** — *screening estimate*")
+            st.markdown("**PFD link-budget — worst (satellite × station) pair** "
+                        "— *screening estimate; hover ⓘ for the formula*")
+            INFO = {
+                "Interference frequency":
+                    "Midpoint of the overlap: satellite emission band ∩ victim RX channel.",
+                "Arrival elevation":
+                    "Angle above the station's horizon. GSO: from station lat/lon vs the "
+                    "slot longitude. non-GSO: the worst-case elevation of the SGP4 pass.",
+                "Slant range (d)":
+                    "d = sqrt((R*sin e)^2 + h*(2R+h)) - R*sin e ;  R=6371 km, "
+                    "h=orbit altitude, e=elevation.",
+                "PFD at surface":
+                    "PFD = EIRP_eff - 20*log10(d_m) - 10*log10(4*pi)  [ - FDR for adjacent "
+                    "band ]. EIRP_eff = pwr_max + antenna gain, scaled to the Article-21 "
+                    "reference bandwidth.",
+                "Article-21 limit":
+                    "RR Art.21 Table 21-4 for this band: L0 for elev<=5deg; "
+                    "L0 + slope*(elev-5) for 5-25deg; capped for >=25deg.",
+                "Margin":
+                    "margin = PFD - limit.  margin > 0 => exceeds the limit "
+                    "(screening alert, NOT confirmed interference).",
+            }
+            rows = [("Interference frequency", f"{wp.overlap_freq_mhz:.2f} MHz"),
+                    ("Arrival elevation", f"{wp.elev:.1f}°"),
+                    ("Slant range (d)", f"{wp.slant_km:,.0f} km"),
+                    ("PFD at surface", f"{wp.pfd:.1f} dBW/m²"),
+                    ("Article-21 limit", f"{wp['limit']:.1f} dBW/m²"),
+                    ("Margin", f"{wp.margin:+.1f} dB")]
             chain = pd.DataFrame({
-                "step": ["interference freq", "elevation", "slant range",
-                         "PFD (computed)", "Article-21 limit", "margin"],
-                "value": [f"{wp.overlap_freq_mhz:.2f} MHz",
-                          f"{wp.elev:.1f}°", f"{wp.slant_km:,.0f} km",
-                          f"{wp.pfd:.1f} dBW/m²", f"{wp['limit']:.1f} dBW/m²",
-                          f"{wp.margin:+.1f} dB"]})
+                "quantity": [f'{k} <span class="info-i" title="{INFO[k]}">ⓘ</span>'
+                             for k, _ in rows],
+                "value": [v for _, v in rows]})
             st.markdown(html_table(chain), unsafe_allow_html=True)
-            st.caption(f"source: {wp.pfd_source} · proximity: {wp.proximity}"
+            st.caption(f"power source: {wp.pfd_source} · proximity: {wp.proximity}"
                        + (f" · FDR −{wp.fdr_db:.0f} dB" if wp.proximity == 'adjacent' else ""))
 
         # affected part of Finland (land + maritime)
@@ -643,7 +669,7 @@ def render_triage(ific, row, dark):
         a3.metric("Affected stations", f"{len(aff)}",
                   f"{nmar} maritime" if nmar else "all on land")
 
-        st.markdown("**Affected Finnish frequency bands**")
+        st.markdown("**Overlapping frequencies → intended Finnish use (M4)**")
         st.markdown(html_table(affected_bands(ific, int(pick)).rename(
             columns={"lo": "sat lo (MHz)", "hi": "sat hi (MHz)", "f": "freq (MHz)"}),
             scroll=True), unsafe_allow_html=True)
