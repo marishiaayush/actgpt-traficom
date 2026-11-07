@@ -77,6 +77,33 @@ def worst_pair(ific, ntc):
 
 
 @st.cache_data(show_spinner=False)
+def affected_area(ific, ntc, is_gso):
+    """Which part of Finland (land + maritime/EEZ) the satellite can illuminate,
+    plus the affected stations tagged land/maritime."""
+    import geo
+    if is_gso:
+        con = sqlite3.connect(ROOT / "analysis" / f"srs{ific}.db")
+        slot = pd.read_sql("SELECT MIN(long_nom) lon FROM geo WHERE ntc_id=?",
+                           con, params=(ntc,)).lon.iloc[0]
+        con.close()
+        reg = geo.affected_region(True, slot_lon=slot)
+    else:
+        alt = q("SELECT alt_km FROM fin_geom_sgp4 WHERE ific_no=? AND sat_ntc_id=?",
+                (ific, ntc))
+        reg = geo.affected_region(False, alt_km=(float(alt.alt_km.iloc[0]) if len(alt) else 600))
+    aff = affected_stations(ific, ntc)
+    aff = aff.copy()
+    aff["zone"] = [geo.classify_point(la, lo) for la, lo in zip(aff.lat, aff.lon)]
+    return reg, aff
+
+
+@st.cache_data(show_spinner=False)
+def maritime_outline():
+    import geo
+    return geo.outline("eez")
+
+
+@st.cache_data(show_spinner=False)
 def orbit_track(ific, ntc, is_gso):
     """Representative SGP4 ground track (non-GSO) or GSO slot point."""
     con = sqlite3.connect(ROOT / "analysis" / f"srs{ific}.db")
@@ -105,51 +132,99 @@ def orbit_track(ific, ntc, is_gso):
 # visual panel
 # --------------------------------------------------------------------------
 def map_panel(ific, ntc, is_gso, dark):
-    tmpl = "plotly_dark" if dark else "plotly_white"
-    allst = q("SELECT station_no, lat, lon FROM protected_stations "
-              "WHERE lat IS NOT NULL")
-    aff = affected_stations(ific, ntc) if ntc else pd.DataFrame()
+    """Zoomable mapbox view: protected stations, maritime (EEZ) border, the
+    illuminated part of Finland, affected stations (land/maritime), orbit track."""
+    style = "carto-darkmatter" if dark else "carto-positron"
+    allst = q("SELECT lat, lon FROM protected_stations WHERE lat IS NOT NULL")
+    reg, aff = affected_area(ific, ntc, is_gso) if ntc else (None, pd.DataFrame())
     fig = go.Figure()
-    fig.add_trace(go.Scattergeo(lon=allst.lon, lat=allst.lat, mode="markers",
-                  marker=dict(size=3, color="#9aa5b1"), name="protected stations",
-                  hoverinfo="skip"))
-    if len(aff):
-        fig.add_trace(go.Scattergeo(lon=aff.lon, lat=aff.lat, mode="markers",
-                      marker=dict(size=8, color="#e53e3e"),
-                      name=f"affected ({len(aff)})",
-                      text=[f"stn {int(s)}  margin {m:+.1f} dB" for s, m
-                            in zip(aff.station_no, aff.margin)], hoverinfo="text"))
-    # orbit context
+
+    # illuminated part of Finland (footprint ∩ territory)
+    if reg is not None and reg["n_cells"]:
+        fig.add_trace(go.Scattermap(lon=list(reg["lon"]), lat=list(reg["lat"]),
+            mode="markers", marker=dict(size=5, color="rgba(49,130,206,0.20)"),
+            name="illuminated area", hoverinfo="skip"))
+    # maritime (EEZ) border
+    mlon, mlat = maritime_outline()
+    fig.add_trace(go.Scattermap(lon=mlon, lat=mlat, mode="lines",
+        line=dict(width=1, color="#3182ce"), name="maritime (EEZ) border",
+        hoverinfo="skip"))
+    # all protected stations
+    fig.add_trace(go.Scattermap(lon=allst.lon, lat=allst.lat, mode="markers",
+        marker=dict(size=4, color="#9aa5b1"), name="protected stations",
+        hoverinfo="skip"))
+    # affected stations, split land vs maritime
+    for z, col in [("land", "#e53e3e"), ("maritime", "#dd6b20")]:
+        s = aff[aff.zone == z] if len(aff) else aff
+        if len(s):
+            fig.add_trace(go.Scattermap(lon=s.lon, lat=s.lat, mode="markers",
+                marker=dict(size=11, color=col), name=f"affected · {z} ({len(s)})",
+                text=[f"stn {int(n)}  {m:+.1f} dB" for n, m in zip(s.station_no, s.margin)],
+                hoverinfo="text"))
+    # orbit ground track (non-GSO)
     if ntc:
         kind, data = orbit_track(ific, ntc, is_gso)
         if kind == "track" and data is not None:
-            fig.add_trace(go.Scattergeo(lon=data[0], lat=data[1], mode="lines",
-                          line=dict(width=1.2, color="#2b6cb0"),
-                          name="orbit ground track"))
-        elif kind == "gso" and data is not None:
-            fig.add_trace(go.Scattergeo(lon=[data], lat=[0], mode="markers",
-                          marker=dict(size=11, symbol="star", color="#d69e2e"),
-                          name=f"GSO slot {data:.1f}E"))
-    fig.update_geos(scope="europe", lataxis_range=[55, 72], lonaxis_range=[15, 35],
-                    showcountries=True, resolution=50,
-                    landcolor="#1a202c" if dark else "#eef3ee",
-                    oceancolor="#2d3748" if dark else "#dce9f5", showocean=True)
-    fig.update_layout(template=tmpl, height=560, margin=dict(l=0, r=0, t=10, b=0),
-                      legend=dict(orientation="h", y=-0.02),
-                      paper_bgcolor="rgba(0,0,0,0)")
-    st.plotly_chart(fig, width='stretch')
+            fig.add_trace(go.Scattermap(lon=list(data[0]), lat=list(data[1]),
+                mode="lines", line=dict(width=1.5, color="#805ad5"),
+                name="orbit ground track", hoverinfo="skip"))
+
+    fig.update_layout(
+        map=dict(style=style, center=dict(lat=64.5, lon=26.0), zoom=3.4),
+        height=600, margin=dict(l=0, r=0, t=0, b=0),
+        legend=dict(orientation="h", y=-0.02, font=dict(size=10)),
+        paper_bgcolor="rgba(0,0,0,0)",
+        font_color="#e2e8f0" if dark else "#1a202c")
+    st.plotly_chart(fig, width='stretch', config={"scrollZoom": True})
 
 
 # --------------------------------------------------------------------------
 # app
 # --------------------------------------------------------------------------
+BASE_CSS = """<style>
+.actgpt-tbl { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+.actgpt-tbl th, .actgpt-tbl td { border: 1px solid #e2e8f0; padding: 4px 8px;
+    text-align: left; white-space: nowrap; }
+.actgpt-tbl th { background: #f1f5f9; }
+.actgpt-scroll { max-height: 220px; overflow: auto; }
+</style>"""
+
+DARK_CSS = """<style>
+.stApp, [data-testid="stHeader"] { background-color: #0e1117; color: #e2e8f0; }
+[data-testid="stSidebar"] { background-color: #161b26; }
+[data-testid="stSidebar"] * , .stApp p, .stApp label, .stApp span,
+.stMarkdown, h1,h2,h3,h4 { color: #e2e8f0 !important; }
+[data-testid="stMetricValue"], [data-testid="stMetricLabel"] { color: #e2e8f0 !important; }
+/* buttons: dark bg + light text (fixes the "white text on light button" bug) */
+.stButton > button, [data-testid="stBaseButton-secondary"],
+[data-testid="stLinkButton"] > a, [data-testid="stLinkButton"] a {
+    background-color: #1f2937 !important; color: #e2e8f0 !important;
+    border: 1px solid #374151 !important; }
+/* inputs */
+[data-baseweb="select"] > div, .stNumberInput input, .stTextInput input,
+[data-baseweb="input"] { background-color: #1f2937 !important; color: #e2e8f0 !important; }
+/* HTML tables -> dark */
+.actgpt-tbl th, .actgpt-tbl td { border-color: #2d3748 !important; color: #e2e8f0 !important; }
+.actgpt-tbl th { background: #1f2937 !important; }
+</style>"""
+
+
+def html_table(df, scroll=False):
+    t = df.to_html(index=False, classes="actgpt-tbl", border=0, escape=False)
+    return f'<div class="actgpt-scroll">{t}</div>' if scroll else t
+
+
 def main():
     pubs = publications()
     with st.sidebar:
         st.title("🛰️ ACT-GPT")
         st.caption("ITU IFIC → Finnish interference triage")
-        dark = st.toggle("🌙 Dark charts", value=False)
+        dark = st.toggle("🌙 Dark mode", value=False)
         st.divider()
+    if dark:
+        st.markdown(DARK_CSS, unsafe_allow_html=True)
+    st.markdown(BASE_CSS, unsafe_allow_html=True)
+    with st.sidebar:
         if pubs.empty:
             st.warning("No processed publications. Run the pipeline first.")
             st.stop()
@@ -211,21 +286,34 @@ def main():
                           f"{wp.elev:.1f}°", f"{wp.slant_km:,.0f} km",
                           f"{wp.pfd:.1f} dBW/m²", f"{wp['limit']:.1f} dBW/m²",
                           f"{wp.margin:+.1f} dB"]})
-            st.dataframe(chain, hide_index=True, width='stretch')
+            st.markdown(html_table(chain), unsafe_allow_html=True)
             st.caption(f"source: {wp.pfd_source} · proximity: {wp.proximity}"
                        + (f" · FDR −{wp.fdr_db:.0f} dB" if wp.proximity == 'adjacent' else ""))
 
-        st.markdown("**Affected Finnish frequency bands**")
-        st.dataframe(affected_bands(ific, int(pick)).rename(
-            columns={"lo": "sat lo (MHz)", "hi": "sat hi (MHz)", "f": "freq (MHz)"}),
-            hide_index=True, width='stretch', height=180)
+        # affected part of Finland (land + maritime)
+        reg, aff = affected_area(ific, int(pick), bool(srow.is_gso))
+        st.markdown("**Affected part of Finland** (footprint ∩ territory)")
+        a1, a2, a3 = st.columns(3)
+        a1.metric("Finnish territory in footprint", f"{reg['pct_territory']:.0f}%")
+        a2.metric("Maritime (EEZ) affected",
+                  "yes" if reg["includes_maritime"] else "no",
+                  f"{reg['pct_maritime']:.0f}% of sea" if reg["includes_maritime"] else None)
+        nmar = int((aff.zone == "maritime").sum()) if len(aff) else 0
+        a3.metric("Affected stations", f"{len(aff)}",
+                  f"{nmar} maritime" if nmar else "all on land")
 
-        aff = affected_stations(ific, int(pick))
+        st.markdown("**Affected Finnish frequency bands**")
+        st.markdown(html_table(affected_bands(ific, int(pick)).rename(
+            columns={"lo": "sat lo (MHz)", "hi": "sat hi (MHz)", "f": "freq (MHz)"}),
+            scroll=True), unsafe_allow_html=True)
+
         st.markdown(f"**Affected protected stations ({len(aff)})**")
         if len(aff):
-            st.dataframe(aff[["station_no", "role", "overlap_freq_mhz", "margin"]]
-                         .rename(columns={"overlap_freq_mhz": "freq (MHz)"}),
-                         hide_index=True, width='stretch', height=160)
+            st.markdown(html_table(
+                aff[["station_no", "zone", "overlap_freq_mhz", "margin"]]
+                .round({"overlap_freq_mhz": 2, "margin": 1})
+                .rename(columns={"overlap_freq_mhz": "freq (MHz)"}), scroll=True),
+                unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
