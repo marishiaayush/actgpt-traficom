@@ -112,25 +112,33 @@ def over_limit_region(is_gso, eirp_eff, freq_mhz, slot_lon=None,
     glon, glat, zone = _grid()
     aff = np.zeros(len(glon), bool)
     mtl = None if incl is None else (incl if incl <= 90 else 180 - incl)
+    spread = 10.0 * math.log10(4 * math.pi)
+    sweep = np.arange(5, 91, 5)               # match pfd_score's elevation sweep
+
+    def exceeds(elev, alt):
+        """True if PFD at this elevation exceeds the limit."""
+        d = slant_range_km(elev, alt)
+        pfd = eirp_eff - 20.0 * math.log10(d * 1000.0) - spread
+        lim, _ = article21.limit(freq_mhz, elev)
+        return pfd - lim > 0
+
     for i in range(len(glon)):
         if is_gso:
+            # GSO elevation from a cell is fixed geometry -> single value
             elev = elevation_from_central_angle(
                 central_angle_deg(glat[i], glon[i], 0.0, slot_lon), GSO_ALT_KM)
-            if elev <= 0:
-                continue
-            d = slant_range_km(elev, GSO_ALT_KM)
+            if elev > 0 and exceeds(elev, GSO_ALT_KM):
+                aff[i] = True
         else:
-            if mtl is None or abs(glat[i]) <= mtl:
-                elev = 85.0
-            else:
-                elev = elevation_from_central_angle(abs(glat[i]) - mtl, alt_km)
-                if elev <= 0:
-                    continue
-            d = slant_range_km(elev, alt_km)
-        pfd = eirp_eff - 20.0 * math.log10(d * 1000.0) - 10.0 * math.log10(4 * math.pi)
-        lim, _ = article21.limit(freq_mhz, elev)
-        if pfd - lim > 0:
-            aff[i] = True
+            # non-GSO: a cell sees the satellite across a RANGE of elevations as
+            # it passes. The worst case (and the strictest Art-21 limit) is often
+            # the low grazing angle -- so sweep, like the station scorer does.
+            emax = 90.0 if (mtl is None or abs(glat[i]) <= mtl) else \
+                elevation_from_central_angle(abs(glat[i]) - mtl, alt_km)
+            if emax <= 5:
+                continue
+            if any(exceeds(e, alt_km) for e in sweep if e <= emax):
+                aff[i] = True
     tot = len(glon)
     sea_tot = int((zone == "maritime").sum())
     aff_sea = int((aff & (zone == "maritime")).sum())
