@@ -102,7 +102,7 @@ def affected_region(is_gso, slot_lon=None, alt_km=None):
 
 
 def over_limit_region(is_gso, eirp_eff, freq_mhz, slot_lon=None,
-                      alt_km=None, incl=None):
+                      alt_km=None, incl=None, max_elev=None):
     """Grid cells where the satellite's PFD would EXCEED the Article-21 limit
     (per-cell geometry), i.e. *which part of Finland is actually over the
     limit*. Varies across Finland (unlike all-or-nothing horizon visibility)."""
@@ -131,10 +131,18 @@ def over_limit_region(is_gso, eirp_eff, freq_mhz, slot_lon=None,
                 aff[i] = True
         else:
             # non-GSO: a cell sees the satellite across a RANGE of elevations as
-            # it passes. The worst case (and the strictest Art-21 limit) is often
-            # the low grazing angle -- so sweep, like the station scorer does.
-            emax = 90.0 if (mtl is None or abs(glat[i]) <= mtl) else \
-                elevation_from_central_angle(abs(glat[i]) - mtl, alt_km)
+            # it passes. The worst case (and strictest Art-21 limit) is often the
+            # low grazing angle -- so sweep, like the station scorer does.
+            # Cap at the SGP4 max elevation when known: it reflects the FULL
+            # constellation's real reach (a notice can have several inclination
+            # shells; the stored `incl` is only one of them). This keeps the
+            # shaded area consistent with the flagged stations.
+            if max_elev is not None:
+                emax = max_elev
+            elif mtl is None or abs(glat[i]) <= mtl:
+                emax = 90.0
+            else:
+                emax = elevation_from_central_angle(abs(glat[i]) - mtl, alt_km)
             if emax <= 5:
                 continue
             if any(exceeds(e, alt_km) for e in sweep if e <= emax):

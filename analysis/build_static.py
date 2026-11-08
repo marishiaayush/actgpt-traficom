@@ -120,11 +120,12 @@ def build_payload():
                 reg = geo.over_limit_region(True, eirp_eff, wp.f, slot_lon=slot)
                 d["orbit"] = None
             else:
-                gi = pd.read_sql("SELECT alt_km a, incl i FROM fin_geom_sgp4 WHERE ific_no=? AND sat_ntc_id=?",
+                gi = pd.read_sql("SELECT alt_km a, incl i, max_elev_deg me FROM fin_geom_sgp4 WHERE ific_no=? AND sat_ntc_id=?",
                                  app, params=(int(pub.ific_no), ntc))
                 reg = geo.over_limit_region(False, eirp_eff, wp.f,
                         alt_km=float(gi.a.iloc[0]) if len(gi) else 600,
-                        incl=float(gi.i.iloc[0]) if len(gi) else 90)
+                        incl=float(gi.i.iloc[0]) if len(gi) else 90,
+                        max_elev=float(gi.me.iloc[0]) if len(gi) else None)
                 d["orbit"] = orbit_track(srs, ntc)
             nmar = sum(1 for x in d["affected"] if x[3] == "maritime")
             d["area"] = dict(pct=reg["pct_territory"], maritime=reg["includes_maritime"],

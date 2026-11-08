@@ -102,12 +102,13 @@ def affected_area(ific, ntc, is_gso):
             con.close()
             reg = geo.over_limit_region(True, eirp_eff, freq, slot_lon=slot)
         else:
-            gi = q("SELECT alt_km, incl FROM fin_geom_sgp4 WHERE ific_no=? AND sat_ntc_id=?",
-                   (ific, ntc))
+            gi = q("SELECT alt_km, incl, max_elev_deg FROM fin_geom_sgp4 "
+                   "WHERE ific_no=? AND sat_ntc_id=?", (ific, ntc))
             reg = geo.over_limit_region(
                 False, eirp_eff, freq,
                 alt_km=float(gi.alt_km.iloc[0]) if len(gi) else 600.0,
-                incl=float(gi.incl.iloc[0]) if len(gi) else 90.0)
+                incl=float(gi.incl.iloc[0]) if len(gi) else 90.0,
+                max_elev=float(gi.max_elev_deg.iloc[0]) if len(gi) else None)
     aff = affected_stations(ific, ntc)
     aff = aff.copy()
     aff["zone"] = [geo.classify_point(la, lo) for la, lo in zip(aff.lat, aff.lon)]
