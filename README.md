@@ -1,8 +1,10 @@
-<p align="center"><img src="Logo.svg" alt="ACT-GPT" width="320"></p>
+<p align="center"><img src="Logo.svg" alt="Stellar Shrew" width="320"></p>
 
-# actgpt-traficom
+# Stellar Shrew
 
-**Saving Earth from Space Interferers** — an auditable, AI-assisted workflow that
+<sub>repo: `actgpt-traficom`</sub>
+
+**Saving Earth from Space Interferers** — an auditable, automated workflow that
 monitors ITU BR IFIC satellite filings, flags the ones that could interfere with
 protected Finnish radio stations, and produces a ranked, human-reviewable queue.
 
@@ -146,3 +148,28 @@ uv run python analysis/build_static.py    # -> docs/index.html (read-only)
 
 Top level: **`dashboard.py`** (Streamlit app). Figures live in `analysis/plots/`;
 Finland boundaries in `analysis/data/`.
+
+## Repository layout
+
+```
+stellar-shrew/
+├── dashboard.py            # the Streamlit app (run this)
+├── README.md · SETUP.md · DESCRIPTION.md
+├── Logo.svg                # Stellar Shrew mark
+├── pyproject.toml · uv.lock · .python-version
+├── .streamlit/             # app config
+├── docs/                   # read-only static export (GitHub Pages)
+└── analysis/               # the pipeline
+    ├── pipeline.py         # one entry point → app.db
+    ├── *.py                # overlap · SGP4 · Article-21 · PFD · geo · receiver …
+    ├── EXPLAIN · REPORT · GLOSSARY · QUESTIONS (.md)  # methodology & docs
+    ├── data/               # Finland land + EEZ boundaries, Article-21 table
+    └── plots/              # explainer figures
+```
+
+All datasets (ITU `.mdb`, derived `.db`, XLSX, JSON, ZIP) are git-ignored —
+download/regenerate them locally (see **[`SETUP.md`](SETUP.md)**).
+
+## License
+
+[MIT](LICENSE) © 2026 Aayush Marishi, Janus Mosbacher, Pranav Suresh.

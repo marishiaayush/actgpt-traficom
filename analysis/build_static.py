@@ -122,8 +122,14 @@ def build_payload():
             else:
                 gi = pd.read_sql("SELECT alt_km a, incl i, max_elev_deg me FROM fin_geom_sgp4 WHERE ific_no=? AND sat_ntc_id=?",
                                  app, params=(int(pub.ific_no), ntc))
+                # altitude of the shell that produced the worst pair (consistent
+                # with eirp_eff); stored alt_km may be a different shell.
+                from pfd import altitude_from_slant
+                alt_wp = altitude_from_slant(wp.elev, wp.slant_km)
+                if not (50.0 <= alt_wp <= 40000.0):
+                    alt_wp = float(gi.a.iloc[0]) if len(gi) else 600
                 reg = geo.over_limit_region(False, eirp_eff, wp.f,
-                        alt_km=float(gi.a.iloc[0]) if len(gi) else 600,
+                        alt_km=alt_wp,
                         incl=float(gi.i.iloc[0]) if len(gi) else 90,
                         max_elev=float(gi.me.iloc[0]) if len(gi) else None)
                 d["orbit"] = orbit_track(srs, ntc)
@@ -156,7 +162,7 @@ def main():
 
 TEMPLATE = r"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ACT-GPT · Traficom interference triage</title>
+<title>Stellar Shrew · Traficom interference triage</title>
 <script src="https://cdn.plot.ly/plotly-3.0.1.min.js" charset="utf-8"></script>
 <style>
 :root{--bg:#f7fafc;--panel:#fff;--text:#1a202c;--muted:#718096;--line:#e2e8f0;--accent:#2b6cb0}
@@ -184,7 +190,7 @@ border-radius:8px;padding:5px 10px;font-size:.8rem}.filter{display:flex;gap:6px;
 .filter button{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:8px;padding:3px 10px;cursor:pointer}
 .filter button.on{background:var(--accent);color:#fff}
 </style></head><body>
-<header><h1>🛰️ ACT-GPT</h1><span class="pill" id="ific"></span>
+<header><h1>🛰️ Stellar Shrew</h1><span class="pill" id="ific"></span>
 <span class="muted" id="prov"></span>
 <button class="toggle" onclick="toggleDark()">🌙 Dark</button></header>
 <div class="wrap">

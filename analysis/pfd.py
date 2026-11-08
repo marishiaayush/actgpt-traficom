@@ -37,6 +37,19 @@ def slant_range_km(elev_deg: float, alt_km: float) -> float:
     return math.sqrt(rs * rs + alt_km * (2 * R_E_KM + alt_km)) - rs
 
 
+def altitude_from_slant(elev_deg: float, slant_km: float) -> float:
+    """Inverse of slant_range_km: the satellite altitude implied by seeing it at
+    elevation `elev_deg` and slant range `slant_km`. Needed when a filing has
+    several orbital shells -- the stored representative altitude may not match
+    the shell that produced a given (elevation, slant) pair, so recover it from
+    the pair itself to keep the geometry self-consistent.
+        h = -R + sqrt( R^2 + d^2 + 2 R d sin e )
+    """
+    se = math.sin(math.radians(elev_deg))
+    return -R_E_KM + math.sqrt(
+        R_E_KM * R_E_KM + slant_km * slant_km + 2 * R_E_KM * slant_km * se)
+
+
 def elevation_from_central_angle(gamma_deg: float, alt_km: float) -> float:
     """Elevation angle of a satellite at altitude `alt_km` whose sub-satellite
     point is `gamma_deg` of great-circle arc away from the ground station.

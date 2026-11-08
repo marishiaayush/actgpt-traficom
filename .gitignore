@@ -20,3 +20,29 @@ wheels/
 # source datasets / API pulls
 *.xlsx
 *.json
+
+# ---- Submission deliverables: keep LOCAL, not on GitHub ----
+# LaTeX case-study report, its generator, and logo build helper
+*.pdf
+*.tex
+*.aux
+*.log
+*.out
+DEMO_SCRIPT.md
+analysis/build_report_pdf.py
+analysis/make_logo.py
+analysis/plots/stellar_shrew_logo.png
+# interactive HTML plot exports (large; regenerate locally)
+analysis/plots/*.html
+# superseded (v1) figures
+analysis/plots/footprint_3d.png
+analysis/plots/overlap_by_admin.png
+analysis/plots/pfd_triage.png
+analysis/plots/spectrum_overlap.png
+
+# ---- Challenge-provided materials (organiser's files, not our code) ----
+Project Goals.txt
+READ_ME_FIRST.txt
+SHA256SUMS.txt
+Since_AI_*
+Traficom_SinceAI_*

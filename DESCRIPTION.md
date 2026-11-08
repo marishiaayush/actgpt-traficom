@@ -1,4 +1,4 @@
-# ACT-GPT — Saving Earth from Space Interferers
+# Stellar Shrew — Saving Earth from Space Interferers
 
 Every two weeks the ITU publishes hundreds of new satellite filings, and any one
 of them can quietly interfere with the radio systems a country depends on — air-
@@ -7,8 +7,8 @@ catch: once a satellite is launched and radiating, it cannot be recalled, so the
 only moment to act is while it is still a paper filing. Today that means a
 handful of human experts manually reading tens of thousands of entries, hunting
 for the few that genuinely matter. As mega-constellations push filing volumes
-into the stratosphere, that no longer scales. ACT-GPT is the auditable, AI-
-assisted workflow that reads the mass for them — and hands back a short, ranked,
+into the stratosphere, that no longer scales. Stellar Shrew is the auditable, automated
+workflow that reads the mass for them — and hands back a short, ranked,
 human-reviewable shortlist where every decision is traceable to a formula.
 
 Point it at an ITU IFIC publication and it runs a transparent funnel. **Frequency
@@ -53,7 +53,7 @@ tool for any administration on Earth.
 Under the hood it is lean and reproducible — Python, SQLite, Streamlit, and uv —
 cloneable and runnable on a laptop in minutes on macOS, Linux, or Windows, with a
 free static export for sharing. It is, end to end, exactly what the challenge
-asked for: an auditable, AI-assisted workflow that monitors ITU IFIC
+asked for: an auditable, automated workflow that monitors ITU IFIC
 information, identifies the cases relevant to a country, supports the real
 frequency- and power-level analysis, and prepares expert-reviewable output —
 turning a slow, manual, unscalable task into one that is transparent, repeatable,

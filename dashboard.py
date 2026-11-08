@@ -1,5 +1,5 @@
 """
-ACT-GPT Traficom — interference triage dashboard (Phase 1).
+Stellar Shrew Traficom — interference triage dashboard (Phase 1).
 
 Two-panel Streamlit app reading the consolidated app.db:
   LEFT  (visual) : map of affected Finnish stations + the satellite's orbit/footprint
@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "analysis"))
 APP_DB = ROOT / "analysis" / "app.db"
 
-st.set_page_config(page_title="ACT-GPT · Traficom interference triage",
+st.set_page_config(page_title="Stellar Shrew · Traficom interference triage",
                    page_icon="🛰️", layout="wide",
                    initial_sidebar_state="expanded")
 
@@ -104,9 +104,16 @@ def affected_area(ific, ntc, is_gso):
         else:
             gi = q("SELECT alt_km, incl, max_elev_deg FROM fin_geom_sgp4 "
                    "WHERE ific_no=? AND sat_ntc_id=?", (ific, ntc))
+            # recover the altitude of the SHELL that produced the worst pair
+            # (a notice can have several shells; the stored alt_km may be a
+            # different one, which would make eirp_eff and the elevation sweep
+            # geometrically inconsistent). Fall back to the stored value.
+            from pfd import altitude_from_slant
+            alt_wp = altitude_from_slant(wp.elev, wp.slant_km)
+            if not (50.0 <= alt_wp <= 40000.0):
+                alt_wp = float(gi.alt_km.iloc[0]) if len(gi) else 600.0
             reg = geo.over_limit_region(
-                False, eirp_eff, freq,
-                alt_km=float(gi.alt_km.iloc[0]) if len(gi) else 600.0,
+                False, eirp_eff, freq, alt_km=alt_wp,
                 incl=float(gi.incl.iloc[0]) if len(gi) else 90.0,
                 max_elev=float(gi.max_elev_deg.iloc[0]) if len(gi) else None)
     aff = affected_stations(ific, ntc)
@@ -459,7 +466,7 @@ def main():
         except Exception:
             pass
     with st.sidebar:
-        st.title("🛰️ ACT-GPT")
+        st.title("🛰️ Stellar Shrew")
         st.caption("ITU IFIC → Finnish interference triage")
         dark = st.toggle("🌙 Dark mode", value=False)
         st.divider()
@@ -491,7 +498,7 @@ def main():
         _xls, _gen = _report.build_report_xlsx(ific)
         st.download_button(
             "📊 Review report (.xlsx)", _xls,
-            file_name=f"actgpt_IFIC{ific}_{_gen[:19].replace(':', '-')}.xlsx",
+            file_name=f"stellarshrew_IFIC{ific}_{_gen[:19].replace(':', '-')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width='stretch', help="Timestamped summary: analysis + reviewer changes")
         st.link_button("📄 Original ITU filing (.zip)", poller.report_url(ific),
