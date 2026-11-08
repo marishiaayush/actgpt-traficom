@@ -446,57 +446,61 @@ def main():
                     "(needs the IFIC `.mdb` — see SETUP.md)")
             st.stop()
         import poller
-        ific = st.selectbox("Publication (IFIC)", pubs.ific_no,
+        import report as _report
+        # ── ① Publication ──────────────────────────────
+        st.markdown("### 🛰️ Publication")
+        ific = st.selectbox("IFIC", pubs.ific_no,
                             format_func=lambda x: f"IFIC {x} (space)")
         row = pubs[pubs.ific_no == ific].iloc[0]
-        st.metric("Notices", int(row.n_notices))
-        st.metric("Shortlisted", int(row.n_shortlist))
-        st.metric("ALERTs", int(row.n_alerts))
-        st.caption(f"last processed: {row.processed_at}")
-        st.link_button("📄 Fetch ITU report (.zip)", poller.report_url(ific))
-        import report as _report
+        mc = st.columns(3)
+        mc[0].metric("Notices", int(row.n_notices))
+        mc[1].metric("Shortlist", int(row.n_shortlist))
+        mc[2].metric("ALERTs", int(row.n_alerts))
+        st.caption(f"processed {row.processed_at}")
+
+        # ── ② Downloads ────────────────────────────────
+        st.markdown("### 📤 Downloads")
         _xls, _gen = _report.build_report_xlsx(ific)
         st.download_button(
-            "📊 Generate review report (.xlsx)", _xls,
+            "📊 Review report (.xlsx)", _xls,
             file_name=f"actgpt_IFIC{ific}_{_gen[:19].replace(':', '-')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width='stretch',
-            help="Timestamped summary: analysis + reviewer changes")
-        st.divider()
+            width='stretch', help="Timestamped summary: analysis + reviewer changes")
+        st.link_button("📄 Original ITU filing (.zip)", poller.report_url(ific),
+                       width='stretch')
 
-        # --- Phase 3: watch ITU for new publications ---
-        st.markdown("**ITU watch**")
-        lc = poller.last_checked()
-        st.caption(f"last checked: {lc}" if lc else "not checked yet")
-        if st.button("🔄 Check ITU for new IFIC", width='stretch'):
-            with st.spinner("Checking ITU demowic ..."):
-                st.session_state["chk"] = poller.check_itu()
-            st.rerun()
-        chk = st.session_state.get("chk")
-        if chk:
-            if not chk["ok"]:
-                st.warning("Could not reach ITU (offline?).")
-            elif chk["new"]:
-                st.info(f"{len(chk['new'])} unprocessed IFIC(s) available. "
-                        f"Latest: {max(chk['available'])}")
-                pick_new = st.selectbox("process a new IFIC", chk["new"][::-1])
-                if st.button(f"⬇️ Download & process IFIC {pick_new}", width='stretch'):
-                    with st.spinner(f"Downloading + processing IFIC {pick_new} "
-                                    "(large; may take minutes) ..."):
-                        from pipeline import run_ific
-                        try:
-                            poller.download_mdb(int(pick_new))
-                            run_ific(int(pick_new))
-                            q.clear(); st.session_state.pop("chk", None)
-                            st.success(f"IFIC {pick_new} processed — select it above.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Failed: {e}")
-            else:
-                st.success("Up to date — no new IFIC.")
-
-        st.divider()
-        with st.expander("⚙️ Data sources (country config)"):
+        # ── ③ Manage (occasional actions, tucked away) ─
+        st.markdown("### ⚙️ Manage")
+        with st.expander("🔄 Check ITU for new publications"):
+            lc = poller.last_checked()
+            st.caption(f"last checked: {lc}" if lc else "not checked yet")
+            if st.button("Check ITU now", width='stretch'):
+                with st.spinner("Checking ITU demowic ..."):
+                    st.session_state["chk"] = poller.check_itu()
+                st.rerun()
+            chk = st.session_state.get("chk")
+            if chk:
+                if not chk["ok"]:
+                    st.warning("Could not reach ITU (offline?).")
+                elif chk["new"]:
+                    st.info(f"{len(chk['new'])} unprocessed IFIC(s). "
+                            f"Latest: {max(chk['available'])}")
+                    pick_new = st.selectbox("process a new IFIC", chk["new"][::-1])
+                    if st.button(f"⬇️ Download & process {pick_new}", width='stretch'):
+                        with st.spinner(f"Downloading + processing IFIC {pick_new} "
+                                        "(large; may take minutes) ..."):
+                            from pipeline import run_ific
+                            try:
+                                poller.download_mdb(int(pick_new))
+                                run_ific(int(pick_new))
+                                q.clear(); st.session_state.pop("chk", None)
+                                st.success(f"IFIC {pick_new} processed — select it above.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Failed: {e}")
+                else:
+                    st.success("Up to date — no new IFIC.")
+        with st.expander("📥 Data sources (country config)"):
             st.caption("Swap the protected-station list (same column order).")
             up = st.file_uploader("Protected stations (.xlsx)", type=["xlsx"], key="stn_up")
             if up is not None and st.button("Rebuild from this list", width='stretch'):
@@ -512,11 +516,11 @@ def main():
                         for i in list(pubs.ific_no):
                             run_ific(int(i))
                         q.clear()
-                        st.success("Rebuilt — new stations applied to all publications.")
+                        st.success("Rebuilt — applied to all publications.")
                         st.rerun()
-            st.caption("**Article-21 limits** are data-driven: edit "
+            st.caption("Article-21 limits are data-driven: edit "
                        "`analysis/data/article21_table21-4.csv`. "
-                       "M4 allocation / boundary parametrization → roadmap.")
+                       "M4 / boundary parametrization → roadmap.")
 
     tab_triage, tab_db = st.tabs(["🛰️  Triage", "🗄️  Database"])
     with tab_db:
@@ -565,144 +569,122 @@ def render_triage(ific, row, dark):
                     st.markdown(f"*threats — {title}*")
                     st.markdown(html_table(dfd), unsafe_allow_html=True)
 
-    left, right = st.columns([1.1, 1], gap="large")
-    with right:
-        f = st.radio("filter", ["ALERT", "all"], horizontal=True, label_visibility="collapsed")
-        view = sl if f == "all" else sl[sl.label == "ALERT"]
-        TAG = {"ALERT": "🔴", "CLEARED": "✅", "visible": "🟡",
-               "not_visible": "⚪", "needs_data": "🟣"}
-        disp = (view.label.map(TAG).fillna("·") + " "
-                + view.sat_name.fillna("?") + " · " + view.adm.fillna("?")
-                + view.worst_margin_db.map(lambda m: f"  ({m:+.1f} dB)" if pd.notna(m) else "")
-                + view.overridden.map(lambda o: " ✎" if o else ""))
-        pick = st.selectbox(f"shortlist ({len(view)})", view.sat_ntc_id,
-                            format_func=lambda n: disp[view.sat_ntc_id == n].iloc[0])
-        srow = view[view.sat_ntc_id == pick].iloc[0]
-        # focus a station -> highlighted on the map. Driven by THIS selector OR a
-        # map click (synced): map click writes the selector's state before it renders.
-        affz = affected_stations(ific, int(pick))
-        mapkey = f"map_{ific}_{pick}"
-        focuskey = f"focus_{ific}_{pick}"
-        clicked = clicked_from(mapkey)
-        if (clicked is not None and clicked in set(affz.station_no)
-                and st.session_state.get(focuskey) != clicked):
-            st.session_state[focuskey] = clicked
-        focused = None
-        if len(affz):
-            focused = st.selectbox("🔦 focus a station (or click one on the map)",
+    # ---------- controls row (filter · shortlist · focus) ----------
+    cfilt, cpick, cfocus = st.columns([1.1, 2.6, 2.1])
+    f = cfilt.radio("filter", ["ALERT", "all"], horizontal=True, label_visibility="collapsed")
+    view = sl if f == "all" else sl[sl.label == "ALERT"]
+    TAG = {"ALERT": "🔴", "CLEARED": "✅", "visible": "🟡",
+           "not_visible": "⚪", "needs_data": "🟣"}
+    disp = (view.label.map(TAG).fillna("·") + " "
+            + view.sat_name.fillna("?") + " · " + view.adm.fillna("?")
+            + view.worst_margin_db.map(lambda m: f"  ({m:+.1f} dB)" if pd.notna(m) else "")
+            + view.overridden.map(lambda o: " ✎" if o else ""))
+    pick = cpick.selectbox(f"shortlist ({len(view)})", view.sat_ntc_id,
+                           format_func=lambda n: disp[view.sat_ntc_id == n].iloc[0])
+    srow = view[view.sat_ntc_id == pick].iloc[0]
+    affz = affected_stations(ific, int(pick))
+    mapkey, focuskey = f"map_{ific}_{pick}", f"focus_{ific}_{pick}"
+    clicked = clicked_from(mapkey)          # map click syncs the focus selector
+    if (clicked is not None and clicked in set(affz.station_no)
+            and st.session_state.get(focuskey) != clicked):
+        st.session_state[focuskey] = clicked
+    focused = None
+    if len(affz):
+        focused = cfocus.selectbox("🔦 focus a station (or click the map)",
                                    [None] + [int(n) for n in affz.station_no], key=focuskey,
                                    format_func=lambda s: "— none —" if s is None else f"station {s}")
 
+    # ---------- summary strip ----------
+    reg, aff = affected_area(ific, int(pick), bool(srow.is_gso))
+    nmar = int((aff.zone == "maritime").sum()) if len(aff) else 0
+    cc = STATUS_COLOR.get(srow.label, "#718096")
+    ovm = " ✎ reviewer override" if srow.overridden else ""
+    st.markdown(f"#### {srow.sat_name or '?'} "
+                f"<span style='color:{cc}'>● {srow.label}</span>"
+                f"<span style='font-size:.7rem;color:#999'> {ovm}</span>",
+                unsafe_allow_html=True)
+    m = st.columns([1, 1, 1.2, 1.3, 1.3])
+    m[0].metric("Admin", srow.adm or "?")
+    m[1].metric("Type", "GSO" if srow.is_gso else "non-GSO")
+    m[2].metric("Worst margin",
+                f"{srow.worst_margin_db:+.1f} dB" if pd.notna(srow.worst_margin_db) else "—")
+    m[3].metric("Over the limit", f"{reg['pct_territory']:.0f}%",
+                "incl. maritime" if reg["includes_maritime"] else "land only")
+    m[4].metric("Affected stations", f"{len(aff)}",
+                f"{nmar} maritime" if nmar else "all land")
+    rb = st.columns([1, 1, 1, 5])
+    if rb[0].button("✅ Clear", width='stretch', help="Reviewed — not a concern"):
+        set_override(ific, int(pick), "CLEARED"); st.rerun()
+    if rb[1].button("🔴 ALERT", width='stretch'):
+        set_override(ific, int(pick), "ALERT"); st.rerun()
+    if rb[2].button("↩️ Reset", width='stretch', help="Back to the auto label"):
+        set_override(ific, int(pick), None); st.rerun()
+
+    # ---------- map (left) | analysis sub-tabs (right) ----------
+    left, right = st.columns([1.15, 1], gap="large")
     with left:
         map_panel(ific, int(pick), bool(srow.is_gso), dark, focused, mapkey)
         st.caption("Interfering bandwidth — satellite emission vs Finnish RX channel")
         spectrum_panel(ific, int(pick), dark)
-
     with right:
-        c = STATUS_COLOR.get(srow.label, "#718096")
-        ov_mark = " ✎ reviewer override" if srow.overridden else ""
-        st.markdown(f"### {srow.sat_name or '?'} "
-                    f"<span style='color:{c}'>({srow.label})</span>"
-                    f"<span style='font-size:.7rem;color:#999'>{ov_mark}</span>",
+        t_lb, t_bands, t_stns = st.tabs(
+            ["Link budget", "Affected bands", f"Affected stations ({len(aff)})"])
+        with t_lb:
+            wp = worst_pair(ific, int(pick))
+            if wp is not None and wp.status == "scored":
+                st.caption("Worst (satellite × station) pair — screening estimate. "
+                           "Formulas: expander at the bottom of the page.")
+                rows = [("Interference frequency", f"{wp.overlap_freq_mhz:.2f} MHz"),
+                        ("Arrival elevation", f"{wp.elev:.1f}°"),
+                        ("Slant range (d)", f"{wp.slant_km:,.0f} km"),
+                        ("PFD at surface", f"{wp.pfd:.1f} dBW/m²"),
+                        ("Article-21 limit", f"{wp['limit']:.1f} dBW/m²"),
+                        ("Margin", f"{wp.margin:+.1f} dB")]
+                st.markdown(html_table(pd.DataFrame(
+                    {"quantity": [k for k, _ in rows], "value": [v for _, v in rows]})),
                     unsafe_allow_html=True)
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Admin", srow.adm or "?")
-        m2.metric("Type", "GSO" if srow.is_gso else "non-GSO")
-        m3.metric("Worst margin",
-                  f"{srow.worst_margin_db:+.1f} dB" if pd.notna(srow.worst_margin_db) else "—")
-        # reviewer relabel (human-in-the-loop)
-        b1, b2, b3 = st.columns(3)
-        if b1.button("✅ Clear", width='stretch', help="Mark reviewed — not a concern"):
-            set_override(ific, int(pick), "CLEARED"); st.rerun()
-        if b2.button("🔴 Flag ALERT", width='stretch'):
-            set_override(ific, int(pick), "ALERT"); st.rerun()
-        if b3.button("↩️ Reset", width='stretch', help="Back to the auto label"):
-            set_override(ific, int(pick), None); st.rerun()
+                st.caption(f"power source: {wp.pfd_source} · proximity: {wp.proximity}"
+                           + (f" · FDR −{wp.fdr_db:.0f} dB" if wp.proximity == 'adjacent' else ""))
+            else:
+                st.caption("No PFD-assessed pair (not visible / no usable power data).")
+        with t_bands:
+            st.caption("Satellite emission vs the frequency's intended Finnish use (M4)")
+            st.markdown(html_table(affected_bands(ific, int(pick)).rename(
+                columns={"lo": "sat lo (MHz)", "hi": "sat hi (MHz)", "f": "freq (MHz)"}),
+                scroll=True), unsafe_allow_html=True)
+        with t_stns:
+            if focused and focused in set(aff.station_no):
+                st.caption(f"📍 focused: station {focused} (highlighted on the map)")
+            if len(aff):
+                tdf = (aff[["station_no", "zone", "overlap_freq_mhz", "margin"]]
+                       .round({"overlap_freq_mhz": 2, "margin": 1})
+                       .rename(columns={"overlap_freq_mhz": "freq (MHz)"}))
+                tdf.insert(0, "", ["📍" if int(n) == focused else "" for n in tdf.station_no])
+                if focused in set(tdf.station_no):
+                    tdf = pd.concat([tdf[tdf.station_no == focused],
+                                     tdf[tdf.station_no != focused]])
+                st.markdown(html_table(tdf, scroll=True), unsafe_allow_html=True)
+            else:
+                st.caption("No stations over the limit for this satellite.")
 
-        wp = worst_pair(ific, int(pick))
-        if wp is not None and wp.status == "scored":
-            st.markdown("**PFD link-budget — worst (satellite × station) pair** "
-                        "— *screening estimate; hover ⓘ for the formula*")
-            INFO = {
-                "Interference frequency":
-                    "Midpoint of the overlap: satellite emission band ∩ victim RX channel.",
-                "Arrival elevation":
-                    "Angle above the station's horizon. GSO: from station lat/lon vs the "
-                    "slot longitude. non-GSO: the worst-case elevation of the SGP4 pass.",
-                "Slant range (d)":
-                    "d = sqrt((R*sin e)^2 + h*(2R+h)) - R*sin e ;  R=6371 km, "
-                    "h=orbit altitude, e=elevation.",
-                "PFD at surface":
-                    "PFD = EIRP_eff - 20*log10(d_m) - 10*log10(4*pi)  [ - FDR for adjacent "
-                    "band ]. EIRP_eff = pwr_max + antenna gain, scaled to the Article-21 "
-                    "reference bandwidth.",
-                "Article-21 limit":
-                    "RR Art.21 Table 21-4 for this band: L0 for elev<=5deg; "
-                    "L0 + slope*(elev-5) for 5-25deg; capped for >=25deg.",
-                "Margin":
-                    "margin = PFD - limit.  margin > 0 => exceeds the limit "
-                    "(screening alert, NOT confirmed interference).",
-            }
-            rows = [("Interference frequency", f"{wp.overlap_freq_mhz:.2f} MHz"),
-                    ("Arrival elevation", f"{wp.elev:.1f}°"),
-                    ("Slant range (d)", f"{wp.slant_km:,.0f} km"),
-                    ("PFD at surface", f"{wp.pfd:.1f} dBW/m²"),
-                    ("Article-21 limit", f"{wp['limit']:.1f} dBW/m²"),
-                    ("Margin", f"{wp.margin:+.1f} dB")]
-            chain = pd.DataFrame({
-                "quantity": [f'{k} <span class="info-i" title="{INFO[k]}">ⓘ</span>'
-                             for k, _ in rows],
-                "value": [v for _, v in rows]})
-            st.markdown(html_table(chain), unsafe_allow_html=True)
-            st.caption(f"power source: {wp.pfd_source} · proximity: {wp.proximity}"
-                       + (f" · FDR −{wp.fdr_db:.0f} dB" if wp.proximity == 'adjacent' else ""))
-            with st.expander("ⓘ Formulas — how each value is calculated"):
-                st.markdown(
-                    "- **Interference frequency** — midpoint of the overlap "
-                    "(satellite emission band ∩ victim RX channel).\n"
-                    "- **Arrival elevation** — angle above the station's horizon "
-                    "(GSO: station lat/lon vs slot longitude; non-GSO: worst-case "
-                    "elevation of the SGP4 pass).\n"
-                    "- **Slant range** &nbsp; `d = √((R·sin e)² + h(2R+h)) − R·sin e`"
-                    " &nbsp; (R = 6371 km, h = orbit altitude, e = elevation).\n"
-                    "- **PFD at surface** &nbsp; `PFD = EIRP_eff − 20·log₁₀(d_m) "
-                    "− 10·log₁₀(4π)` &nbsp;[− FDR for adjacent band]. "
-                    "EIRP_eff = pwr_max + antenna gain, scaled to the Article-21 "
-                    "reference bandwidth.\n"
-                    "- **Article-21 limit** — RR Art.21 Table 21-4 per band: "
-                    "L0 for δ ≤ 5°; L0 + slope·(δ−5) for 5–25°; capped for δ ≥ 25°.\n"
-                    "- **Margin** &nbsp; `margin = PFD − limit` &nbsp; (> 0 ⇒ exceeds "
-                    "the limit → screening alert, **not** confirmed interference).")
-
-        # affected part of Finland (land + maritime)
-        reg, aff = affected_area(ific, int(pick), bool(srow.is_gso))
-        st.markdown("**Affected part of Finland** (area over the Article-21 limit)")
-        a1, a2, a3 = st.columns(3)
-        a1.metric("Territory over limit", f"{reg['pct_territory']:.0f}%")
-        a2.metric("Maritime (EEZ) affected",
-                  "yes" if reg["includes_maritime"] else "no",
-                  f"{reg['pct_maritime']:.0f}% of sea" if reg["includes_maritime"] else None)
-        nmar = int((aff.zone == "maritime").sum()) if len(aff) else 0
-        a3.metric("Affected stations", f"{len(aff)}",
-                  f"{nmar} maritime" if nmar else "all on land")
-
-        st.markdown("**Overlapping frequencies → intended Finnish use (M4)**")
-        st.markdown(html_table(affected_bands(ific, int(pick)).rename(
-            columns={"lo": "sat lo (MHz)", "hi": "sat hi (MHz)", "f": "freq (MHz)"}),
-            scroll=True), unsafe_allow_html=True)
-
-        st.markdown(f"**Affected protected stations ({len(aff)})**")
-        if focused and focused in set(aff.station_no):
-            st.caption(f"📍 focused: station {focused} (highlighted on the map)")
-        if len(aff):
-            tdf = (aff[["station_no", "zone", "overlap_freq_mhz", "margin"]]
-                   .round({"overlap_freq_mhz": 2, "margin": 1})
-                   .rename(columns={"overlap_freq_mhz": "freq (MHz)"}))
-            tdf.insert(0, "", ["📍" if int(n) == focused else "" for n in tdf.station_no])
-            if focused in set(tdf.station_no):      # focused row first
-                tdf = pd.concat([tdf[tdf.station_no == focused],
-                                 tdf[tdf.station_no != focused]])
-            st.markdown(html_table(tdf, scroll=True), unsafe_allow_html=True)
+    # ---------- methodology & formulas (bottom, full width) ----------
+    with st.expander("ⓘ Methodology & formulas — how each value is calculated"):
+        st.markdown(
+            "- **Interference frequency** — midpoint of the overlap "
+            "(satellite emission band ∩ victim RX channel).\n"
+            "- **Arrival elevation** — angle above the station's horizon "
+            "(GSO: station lat/lon vs slot longitude; non-GSO: worst-case "
+            "elevation of the SGP4 pass).\n"
+            "- **Slant range** &nbsp; `d = √((R·sin e)² + h(2R+h)) − R·sin e`"
+            " &nbsp; (R = 6371 km, h = orbit altitude, e = elevation).\n"
+            "- **PFD at surface** &nbsp; `PFD = EIRP_eff − 20·log₁₀(d_m) "
+            "− 10·log₁₀(4π)` &nbsp;[− FDR for adjacent band]. "
+            "EIRP_eff = pwr_max + antenna gain, scaled to the Article-21 "
+            "reference bandwidth.\n"
+            "- **Article-21 limit** — RR Art.21 Table 21-4 per band: "
+            "L0 for δ ≤ 5°; L0 + slope·(δ−5) for 5–25°; capped for δ ≥ 25°.\n"
+            "- **Margin** &nbsp; `margin = PFD − limit` &nbsp; (> 0 ⇒ exceeds "
+            "the limit → screening alert, **not** confirmed interference).")
 
 
 if __name__ == "__main__":
