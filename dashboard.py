@@ -146,6 +146,33 @@ def orbit_track(ific, ntc, is_gso):
     return ("track", (sp.longitude.degrees, sp.latitude.degrees))
 
 
+@st.cache_data(show_spinner=False)
+def passes_profile(ific, ntc):
+    """How OFTEN a non-GSO satellite is in view of Finland over 24 h: the best-
+    satellite elevation vs time (the sawtooth of passes) + recurrence stats.
+    Uses the same representative sampled sub-constellation as geometry_sgp4."""
+    import geometry_sgp4 as G
+    con = sqlite3.connect(ROOT / "analysis" / f"srs{ific}.db")
+    try:
+        pl = pd.read_sql("""SELECT inclin_ang, op_ht_km, long_asc FROM orbit
+                            WHERE ntc_id=? AND op_ht_km IS NOT NULL""",
+                         con, params=(ntc,))
+    finally:
+        con.close()
+    pl = pl.dropna(subset=["inclin_ang", "op_ht_km"])
+    if pl.empty:
+        return None
+    samp = pl.sample(min(G.N_PLANES, len(pl)), random_state=0)
+    planes = [(r.inclin_ang, r.op_ht_km,
+               r.long_asc if pd.notna(r.long_asc) else 360 * i / len(samp))
+              for i, r in enumerate(samp.itertuples())]
+    cov = G.coverage_over_finland(G.constellation(planes))
+    return dict(t=list(cov["t_hours"]), elev=list(cov["best_elev"]),
+                nvis=[int(v) for v in cov["nvis"]],
+                max_elev=cov["max_elev_deg"], passes=cov["passes_per_day"],
+                view_min=cov["view_min_per_day"], coverage=cov["coverage_pct"])
+
+
 # --------------------------------------------------------------------------
 # visual panel
 # --------------------------------------------------------------------------
@@ -628,8 +655,9 @@ def render_triage(ific, row, dark):
         st.caption("Interfering bandwidth — satellite emission vs Finnish RX channel")
         spectrum_panel(ific, int(pick), dark)
     with right:
-        t_lb, t_bands, t_stns = st.tabs(
-            ["Link budget", "Affected bands", f"Affected stations ({len(aff)})"])
+        t_lb, t_bands, t_stns, t_pass = st.tabs(
+            ["Link budget", "Affected bands",
+             f"Affected stations ({len(aff)})", "⏱ Passes"])
         with t_lb:
             wp = worst_pair(ific, int(pick))
             if wp is not None and wp.status == "scored":
@@ -667,6 +695,51 @@ def render_triage(ific, row, dark):
                 st.markdown(html_table(tdf, scroll=True), unsafe_allow_html=True)
             else:
                 st.caption("No stations over the limit for this satellite.")
+        with t_pass:
+            if srow.is_gso:
+                st.info("**GSO (geostationary)** — the satellite holds a fixed "
+                        "sky position, so it is **continuously in view** from "
+                        "Finland. Any interference is **persistent**, not "
+                        "intermittent (no passes to count).")
+            else:
+                cov = passes_profile(ific, int(pick))
+                if cov is None:
+                    st.caption("No orbital-element data for this notice.")
+                else:
+                    pm = st.columns(3)
+                    pm[0].metric("Passes / day", cov["passes"],
+                                 help="Times the best-elevation track rises above "
+                                      "5° over Finland in 24 h.")
+                    pm[1].metric("Minutes in view / day", cov["view_min"])
+                    pm[2].metric("Sky coverage", f"{cov['coverage']:.0f}%",
+                                 help="Fraction of the day ≥1 satellite is above "
+                                      "the 5° horizon.")
+                    st.caption("Each spike = one **pass** above the horizon = an "
+                               "interference *opportunity*. Higher/wider spikes and "
+                               "more passes ⇒ more frequent exposure. Representative "
+                               "sampled sub-constellation over 24 h.")
+                    lab = "#e2e8f0" if dark else "#1a202c"
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=cov["t"], y=cov["elev"], mode="lines",
+                        line=dict(color="#e53e3e" if dark else "#c53030", width=1.2),
+                        fill="tozeroy",
+                        fillcolor="rgba(229,62,62,0.18)", name="best elevation"))
+                    fig.add_hline(y=5, line=dict(color="#718096", dash="dash", width=1),
+                                  annotation_text="5° horizon",
+                                  annotation_position="top left",
+                                  annotation_font_color=lab)
+                    fig.update_layout(
+                        height=230, margin=dict(l=44, r=10, t=8, b=34),
+                        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                        xaxis_title="hours (UTC, 24 h window)",
+                        yaxis_title="elevation (°)",
+                        xaxis=dict(color=lab, gridcolor="rgba(128,128,128,0.15)"),
+                        yaxis=dict(color=lab, gridcolor="rgba(128,128,128,0.15)",
+                                   range=[0, 90]),
+                        font=dict(color=lab), showlegend=False)
+                    st.plotly_chart(fig, width="stretch",
+                                    key=f"pass_{pick}_{dark}")
 
     # ---------- methodology & formulas (bottom, full width) ----------
     with st.expander("ⓘ Methodology & formulas — how each value is calculated"):
